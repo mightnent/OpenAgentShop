@@ -10,6 +10,14 @@
 
 import type { ProductCatalog, CatalogProduct, ProductMedia } from "../types/product-catalog";
 
+ function toAbsoluteUrl(url: string, baseUrl: string): string {
+  try {
+    return new URL(url, baseUrl).toString();
+  } catch {
+    return url;
+  }
+ }
+
 /**
  * Template for AI agents to understand the expected catalog structure
  */
@@ -58,6 +66,8 @@ export interface ScrapedProduct {
   description?: string;
   shortDescription?: string;
   imageUrl?: string;
+  imageUrls?: string[];
+  media?: ProductMedia[];
   category?: string;
   tier?: string;
   attributes?: Record<string, unknown>;
@@ -91,9 +101,23 @@ export function convertScrapedToCatalog(
   const currency = shopInfo.currency || "USD";
 
   const products: CatalogProduct[] = scrapedProducts.map((scraped, index) => {
-    const media: ProductMedia[] = scraped.imageUrl
-      ? [{ type: "image", url: scraped.imageUrl, alt: scraped.name }]
-      : [];
+    const mediaUrls = [
+      ...(scraped.media ?? []).filter((m) => m.type === "image").map((m) => m.url),
+      ...(scraped.imageUrls ?? []),
+      ...(scraped.imageUrl ? [scraped.imageUrl] : []),
+    ]
+      .map((u) => (typeof u === "string" ? u.trim() : ""))
+      .filter(Boolean)
+      .map((u) => toAbsoluteUrl(u, shopInfo.url));
+
+    const dedupedMediaUrls = [...new Set(mediaUrls)];
+
+    const media: ProductMedia[] = dedupedMediaUrls.map((url, i) => ({
+      type: "image",
+      url,
+      alt: scraped.name,
+      sort_order: i,
+    }));
 
     const product: CatalogProduct = {
       id: slugify(scraped.name) || `product-${index + 1}`,
@@ -148,7 +172,8 @@ When scraping products from a website, extract the following for each product:
 ### Optional Fields
 - **description**: Full product description
 - **shortDescription**: Brief summary (1-2 sentences)
-- **imageUrl**: Primary product image URL
+- **imageUrl**: Primary product image URL (absolute URL preferred)
+- **imageUrls**: All product image URLs (include gallery images; include lazy-loaded URLs from attributes like data-src/data-original/srcset)
 - **category**: Product category
 - **tier**: Product tier (e.g., "basic", "premium")
 - **attributes**: Any custom attributes (sizes, colors, features, etc.)
@@ -175,6 +200,7 @@ Return data as JSON matching the ScrapedProduct interface:
   "description": "Full description...",
   "shortDescription": "Brief summary",
   "imageUrl": "https://...",
+  "imageUrls": ["https://...", "https://..."],
   "category": "Category",
   "tier": "premium",
   "attributes": {

@@ -87,6 +87,8 @@ ${uiMode !== "classic" ? `
     {
       keyword: z.string().optional().describe("Search keyword for name/description"),
 ${tiers.length > 0 ? `      tier: z.enum([${tiers.map((t) => `"${t}"`).join(", ")}]).optional().describe("Filter by product tier"),\n` : ""}${categories.length > 0 ? `      category: z.enum([${categories.map((c) => `"${c}"`).join(", ")}]).optional().describe("Filter by category"),\n` : ""}${filterableAttrs.map((a) => `      ${a.key}: z.string().optional().describe("Filter by ${a.label}"),\n`).join("")}      activeOnly: z.boolean().optional().default(true).describe("Only show active products"),
+      limit: z.number().int().min(1).max(50).optional().default(5).describe("Max number of products to return (default 5)"),
+      offset: z.number().int().min(0).optional().default(0).describe("Pagination offset"),
     },
     async (args) => {
       const conditions = [];
@@ -101,7 +103,9 @@ ${tiers.length > 0 ? `      if (args.tier) conditions.push(eq(products.tier, arg
         .select()
         .from(products)
         .where(conditions.length > 0 ? and(...conditions) : undefined)
-        .orderBy(products.price);
+        .orderBy(products.price)
+        .limit(args.limit)
+        .offset(args.offset);
 
       // Fetch media for all products
       const mediaMap = new Map<number, { url: string; alt: string | null }[]>();
@@ -136,7 +140,7 @@ ${tiers.length > 0 ? `      if (args.tier) conditions.push(eq(products.tier, arg
 
       return {
         content: [
-          { type: "text", text: \`Found \${result.length} products:\\n\\n\${textSummary}\` },
+          { type: "text", text: \`Showing \${result.length} products:\\n\\n\${textSummary}\` },
           { type: "resource", resource: { uri: \`ui://${slugify(shopName)}\${resourcePath}\`, mimeType: "text/html", text: html } },
         ],
         _meta: { ui: { resourceUri: \`ui://${slugify(shopName)}\${resourcePath}\` } },
@@ -198,6 +202,7 @@ ${tiers.length > 0 ? `      if (args.tier) conditions.push(eq(products.tier, arg
     {
       budget: z.number().optional().describe("Maximum budget in major currency units (e.g., 100 for $100)"),
 ${tiers.length > 0 ? `      preferredTier: z.enum([${tiers.map((t) => `"${t}"`).join(", ")}]).optional().describe("Preferred tier"),\n` : ""}      keyword: z.string().optional().describe("What the customer is looking for"),
+      limit: z.number().int().min(1).max(20).optional().default(5).describe("Max number of recommendations to return (default 5)"),
     },
     async (args) => {
       const conditions = [eq(products.active, true)];
@@ -212,7 +217,7 @@ ${tiers.length > 0 ? `      if (args.preferredTier) conditions.push(eq(products.
         .from(products)
         .where(and(...conditions))
         .orderBy(products.price)
-        .limit(5);
+        .limit(args.limit);
 
       const textSummary = result
         .map((p, i) => {

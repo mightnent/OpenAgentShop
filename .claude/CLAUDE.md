@@ -4,6 +4,7 @@ This is the OpenAgentShop SDK - a tool for generating MCP-UI ready and UCP-compl
 
 ## Key Files
 
+- `INSTRUCTIONS.md` - **START HERE** for AI agents building shops (step-by-step workflow)
 - `src/index.ts` - Main SDK entry point (exports all public APIs)
 - `src/types/product-catalog.ts` - Product Catalog JSON specification types
 - `src/types/config.ts` - SDK configuration types
@@ -12,8 +13,9 @@ This is the OpenAgentShop SDK - a tool for generating MCP-UI ready and UCP-compl
 - `src/handlers/` - Next.js route handler generators
 - `src/cli/` - CLI scaffolding tool
 - `templates/example-catalog.json` - Example product catalog
-- `skills/SKILL.md` - AI agent skill for building shops (with YAML frontmatter)
-- `references/` - Reference implementations and patterns
+- `skills/SKILL.md` - Advanced AI agent patterns and code examples
+- `examples/` - Complete reference implementations
+- `references/` - Implementation patterns and notes
 - `docs/` - Comprehensive documentation
 
 ## UCP Reference

@@ -140,13 +140,13 @@ npx open-agent-shop init --catalog catalog.json --provider postgres
 | [API Reference](./docs/api-reference.md) | Generated API endpoints and MCP tools |
 | [Roadmap](./docs/roadmap.md) | Current status and future plans |
 
-## AI Agent Skill
+## For AI Coding Agents
 
-For AI agents building shops with this SDK, see the [OpenAgentShop Skill](./skills/SKILL.md). This provides instructions for AI coding agents to scaffold and customize shops using the SDK.
+**AI agents (Manus, Cascade, Claude Code, etc.):** Start with [INSTRUCTIONS.md](./INSTRUCTIONS.md) for a complete step-by-step workflow to help users build shops.
 
-Reference implementations and detailed patterns are in [`references/`](./references/).
+**Advanced patterns and skill integration:** See [skills/SKILL.md](./skills/SKILL.md) for detailed implementation patterns, code examples, and troubleshooting.
 
-If you plan to use AI agents (Cascade, Manus, Claude, etc.) to onboard merchants, start with the AI onboarding prompt and checklist in the skill doc.
+**Reference implementations:** Review [`examples/`](./examples/) to see complete generated shops.
 
 ## License
 

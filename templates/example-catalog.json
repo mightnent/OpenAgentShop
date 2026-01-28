@@ -1,0 +1,149 @@
+{
+  "shop": {
+    "name": "TravelGuard Insurance",
+    "description": "Comprehensive travel insurance plans for every journey",
+    "url": "http://localhost:3002",
+    "currency": "USD",
+    "tax_rate": 0.08,
+    "port": 3002,
+    "branding": {
+      "primary_color": "#1a1a1a",
+      "logo_url": null,
+      "favicon_url": null
+    },
+    "policies": {
+      "terms_url": "http://localhost:3002/terms",
+      "privacy_url": "http://localhost:3002/privacy",
+      "return_url": "http://localhost:3002/returns",
+      "return_window_days": 14
+    }
+  },
+  "product_schema": {
+    "custom_attributes": [
+      {
+        "key": "coverage_highlights",
+        "type": "string[]",
+        "label": "Coverage Highlights",
+        "display_in_list": false,
+        "display_in_detail": true,
+        "filterable": false,
+        "description": "List of coverage features and limits"
+      },
+      {
+        "key": "regions_covered",
+        "type": "string[]",
+        "label": "Regions Covered",
+        "display_in_list": true,
+        "display_in_detail": true,
+        "filterable": true,
+        "description": "Geographic regions where the plan provides coverage"
+      },
+      {
+        "key": "duration_options",
+        "type": "number[]",
+        "label": "Duration Options (days)",
+        "display_in_list": false,
+        "display_in_detail": true,
+        "filterable": false,
+        "description": "Available trip duration options in days"
+      }
+    ],
+    "tiers": ["budget", "standard", "premium"],
+    "categories": ["Travel Insurance"]
+  },
+  "products": [
+    {
+      "id": "budget-explorer",
+      "name": "Budget Explorer",
+      "short_description": "Essential coverage for budget-conscious travelers",
+      "description": "Basic travel insurance coverage for budget-friendly trips. Covers emergency medical expenses, trip cancellation, and lost luggage with essential limits.",
+      "price": 2999,
+      "discount_price": null,
+      "tier": "budget",
+      "category": "Travel Insurance",
+      "active": true,
+      "media": [],
+      "attributes": {
+        "coverage_highlights": [
+          "Emergency Medical: $50,000",
+          "Trip Cancellation: $2,000",
+          "Lost Luggage: $500",
+          "24/7 Assistance Hotline"
+        ],
+        "regions_covered": ["Worldwide (excluding US)"],
+        "duration_options": [7, 14, 21]
+      }
+    },
+    {
+      "id": "essential-cover",
+      "name": "Essential Cover",
+      "short_description": "Simple, affordable protection for short trips",
+      "description": "Straightforward coverage designed for quick getaways. Includes medical emergencies and basic trip protection at an affordable price.",
+      "price": 2499,
+      "discount_price": null,
+      "tier": "budget",
+      "category": "Travel Insurance",
+      "active": true,
+      "media": [],
+      "attributes": {
+        "coverage_highlights": [
+          "Emergency Medical: $30,000",
+          "Trip Cancellation: $1,500",
+          "Travel Delay: $200/day",
+          "Personal Liability: $25,000"
+        ],
+        "regions_covered": ["Asia", "Europe"],
+        "duration_options": [3, 7, 14]
+      }
+    },
+    {
+      "id": "standard-voyager",
+      "name": "Standard Voyager",
+      "short_description": "Comprehensive worldwide coverage for confident travelers",
+      "description": "Our most popular plan with worldwide coverage, generous medical limits, and comprehensive trip protection. Ideal for international vacations.",
+      "price": 7999,
+      "discount_price": 6999,
+      "tier": "standard",
+      "category": "Travel Insurance",
+      "active": true,
+      "media": [],
+      "attributes": {
+        "coverage_highlights": [
+          "Emergency Medical: $250,000",
+          "Trip Cancellation: $10,000",
+          "Lost Luggage: $2,500",
+          "Emergency Evacuation: $100,000",
+          "Travel Delay: $500/day",
+          "24/7 Concierge Service"
+        ],
+        "regions_covered": ["Worldwide"],
+        "duration_options": [7, 14, 21, 30]
+      }
+    },
+    {
+      "id": "premium-shield",
+      "name": "Premium Shield",
+      "short_description": "Maximum protection with premium benefits and concierge service",
+      "description": "Our highest tier of coverage with unlimited medical benefits, generous trip protection, and premium concierge service. For travelers who want the best.",
+      "price": 14999,
+      "discount_price": null,
+      "tier": "premium",
+      "category": "Travel Insurance",
+      "active": true,
+      "media": [],
+      "attributes": {
+        "coverage_highlights": [
+          "Emergency Medical: Unlimited",
+          "Trip Cancellation: $25,000",
+          "Lost Luggage: $5,000",
+          "Emergency Evacuation: $500,000",
+          "Cancel for Any Reason: 75%",
+          "Premium Concierge 24/7",
+          "Pre-existing Conditions Waiver"
+        ],
+        "regions_covered": ["Worldwide"],
+        "duration_options": [7, 14, 21, 30, 45, 60, 90]
+      }
+    }
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "name": "open-agent-shop",
+  "version": "0.1.0",
+  "description": "SDK for building MCP-UI ready and UCP-compliant agentic commerce apps",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "bin": {
+    "open-agent-shop": "./dist/cli/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "lint": "eslint src/",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "ucp",
+    "agentic-commerce",
+    "model-context-protocol",
+    "universal-commerce-protocol",
+    "ai-commerce",
+    "mcp-ui"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "drizzle-orm": "^0.43.1",
+    "zod": "^3.24.4"
+  },
+  "peerDependencies": {
+    "next": ">=14.0.0",
+    "react": ">=18.0.0",
+    "react-dom": ">=18.0.0",
+    "@neondatabase/serverless": ">=0.10.0"
+  },
+  "peerDependenciesMeta": {
+    "@neondatabase/serverless": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3",
+    "@types/node": "^22.15.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "files": [
+    "dist/",
+    "templates/",
+    "docs/",
+    "open-agent-shop-skill.md",
+    "README.md"
+  ]
+}

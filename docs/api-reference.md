@@ -173,6 +173,44 @@ Cancel a checkout session. Cannot cancel completed or already canceled sessions.
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | `GET` | `/.well-known/ucp` | UCP platform profile |
+| `OPTIONS` | `/.well-known/ucp` | CORS preflight |
+
+**CORS Headers:**
+```
+Access-Control-Allow-Origin: *
+Access-Control-Allow-Methods: GET, OPTIONS
+Access-Control-Allow-Headers: Accept, Content-Type
+```
+
+**Response Structure:**
+```json
+{
+  "ucp": {
+    "version": "2026-01-11"
+  },
+  "business": {
+    "name": "Shop Name",
+    "url": "https://your-deployed-url.com"
+  },
+  "capabilities": {
+    "dev.ucp.shopping.checkout": [{
+      "version": "2026-01-11",
+      "spec": "https://ucp.dev/specs/shopping/checkout",
+      "schema": "https://ucp.dev/schemas/shopping/checkout.json"
+    }]
+  },
+  "services": {
+    "dev.ucp.shopping": [{
+      "version": "2025-11-25",
+      "endpoint": "https://your-deployed-url.com/api/mcp",
+      "transport": "mcp"
+    }]
+  },
+  "payment_handlers": { ... }
+}
+```
+
+**Dynamic URL:** The `business.url` and `services[*].endpoint` are automatically detected from request headers at runtime, supporting dynamic deployments.
 
 ### Pages
 

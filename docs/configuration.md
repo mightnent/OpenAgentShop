@@ -114,6 +114,47 @@ Add additional MCP tools beyond the auto-generated ones:
 }
 ```
 
+### UCP Namespace Rules
+
+The UCP spec requires `spec` and `schema` fields for all capabilities. The origin of these URLs **MUST** match the namespace authority:
+
+| Namespace | Required Origin | Example |
+|-----------|-----------------|---------|
+| `dev.ucp.*` | `https://ucp.dev/...` | Standard UCP capabilities |
+| `com.example.*` | `https://example.com/...` | Custom namespace |
+| `com.yourcompany.*` | `https://yourcompany.com/...` | Your own namespace |
+
+**Important:** The `spec`/`schema` URLs point to the **specification authority** (e.g., `ucp.dev` for standard UCP), NOT the merchant's deployed URL. The merchant's URL is only used for:
+- `business.url` - Your business homepage
+- `services[*].endpoint` - Where your MCP/REST endpoints live
+
+### Dynamic URL Detection
+
+The SDK automatically detects your deployed URL at runtime from request headers:
+
+1. **`X-Forwarded-Host`** - Used when behind a proxy/CDN (e.g., Cloudflare, Vercel)
+2. **`Host`** header - Standard HTTP host header
+3. **`NEXT_PUBLIC_BASE_URL`** env var - Manual override
+4. **Configured `shop.url`** - Fallback from catalog
+
+This means you can deploy to platforms like Manus, Vercel, or Netlify without knowing the URL ahead of time. The `/.well-known/ucp` endpoint will automatically use the correct URL.
+
+### Custom Namespace
+
+To use your own namespace instead of `dev.ucp.*`:
+
+```json
+{
+  "shop": {
+    "name": "My Store",
+    "url": "https://mystore.com",
+    "ucp_namespace": "com.mystore"
+  }
+}
+```
+
+**Note:** When using a custom namespace, you must host your capability specs at your domain (e.g., `https://mystore.com/specs/checkout`).
+
 See [UCP Integration](./ucp-integration.md) for detailed payment handler setup.
 
 ## Feed Configuration

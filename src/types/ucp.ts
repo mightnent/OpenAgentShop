@@ -160,10 +160,26 @@ export interface UcpCheckoutData {
 // UCP Envelope (wraps all responses)
 // ---------------------------------------------------------------------------
 
+/**
+ * UCP Capability Declaration
+ * 
+ * The `spec` and `schema` fields are REQUIRED for all capabilities.
+ * The origin of these URLs MUST match the namespace authority:
+ * - `dev.ucp.*` namespace → `https://ucp.dev/...`
+ * - `com.example.*` namespace → `https://example.com/...`
+ */
 export interface UcpCapabilityDeclaration {
   version: string;
-  spec?: string;
-  schema?: string;
+  /** 
+   * URL to the human-readable specification document.
+   * REQUIRED. Must match namespace authority.
+   */
+  spec: string;
+  /** 
+   * URL to the JSON schema for validation.
+   * REQUIRED. Must match namespace authority.
+   */
+  schema: string;
 }
 
 export interface UcpPaymentHandlerDeclaration {

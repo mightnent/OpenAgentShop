@@ -132,17 +132,23 @@ cd [shop-name]
 cp .env.example .env
 ```
 
-**Ask the user:**
-> Do you have a PostgreSQL database URL? You can use:
-> - **Neon** (recommended for development) - Free tier at https://neon.tech
-> - **Supabase** - Managed Postgres at https://supabase.com
-> - **Standard PostgreSQL** - Any self-hosted or cloud Postgres instance
+The shop requires a PostgreSQL database. Set up the `DATABASE_URL` in `.env`:
 
-Once they provide the `DATABASE_URL`, update the `.env` file.
+**Option 1: Use your platform's database provisioning** (if available)
+- If you have the capability to provision databases (e.g., Manus agents, cloud environments), create a PostgreSQL database and use that connection string.
 
-**For Neon URLs, remind them to include:** `?sslmode=require`
+**Option 2: Use an existing database**
+- Check if the user already has a PostgreSQL database URL they want to use.
 
-Example: `postgresql://user:pass@host/db?sslmode=require`
+**Option 3: Guide user to provision one** (if needed)
+- Suggest options like:
+  - **Neon** - Free tier at https://neon.tech (append `?sslmode=require` to URL)
+  - **Supabase** - https://supabase.com
+  - **Any PostgreSQL provider** - Vercel Postgres, Railway, self-hosted, etc.
+
+Once you have a `DATABASE_URL`, update the `.env` file with it.
+
+**Example format:** `postgresql://user:pass@host/db` (or with SSL: `postgresql://user:pass@host/db?sslmode=require`)
 
 ### 6. Install Dependencies and Seed Database
 

@@ -1,193 +1,209 @@
-import { db } from "@/db";
-import { checkoutSessions } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { notFound } from "next/navigation";
-import Link from "next/link";
+"use client";
 
-interface CheckoutPageProps {
-  params: Promise<{ id: string }>;
-}
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useSearchParams } from "next/navigation";
 
-interface CheckoutData {
+type CheckoutData = {
   id: string;
   status: string;
-  buyer?: {
-    email?: string;
-    first_name?: string;
-    last_name?: string;
-  };
-  line_items: Array<{
-    id: string;
-    item: { id: string; title?: string; price?: number };
-    quantity: number;
-    totals: Array<{ type: string; amount: number; display_text?: string }>;
-  }>;
-  currency: string;
-  totals: Array<{ type: string; amount: number; display_text?: string }>;
-  messages: Array<{
-    type: string;
-    code: string;
-    content: string;
-    severity?: string;
-  }>;
-  order?: { id: string; permalink_url?: string };
-}
+  line_items?: Array<{ item: { title?: string; price?: number }; quantity: number }>;
+  totals?: Array<{ type: string; amount: number }>;
+  currency?: string;
+  order?: { id: string };
+  messages?: Array<{ type: string; content: string }>;
+};
 
-function formatCurrency(amount: number, currency: string): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency,
-  }).format(amount / 100);
-}
+const ALLOWED_DELEGATES = ["payment.instruments_change", "payment.credential"];
 
-export default async function CheckoutPage({ params }: CheckoutPageProps) {
-  const { id } = await params;
+export default function CheckoutPage() {
+  const params = useParams();
+  const sessionId = Array.isArray(params.id) ? params.id[0] : params.id;
+  const searchParams = useSearchParams();
+  const [checkout, setCheckout] = useState<CheckoutData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const [session] = await db
-    .select()
-    .from(checkoutSessions)
-    .where(eq(checkoutSessions.id, id));
+  const pendingRequests = useRef(new Map<string, (value: any) => void>());
+  const channelPort = useRef<MessagePort | null>(null);
+  const readyRequestId = useRef<string | null>(null);
 
-  if (!session) {
-    notFound();
-  }
+  const ecVersion = searchParams.get("ec_version");
+  const requestedDelegates = useMemo(() => {
+    const raw = searchParams.get("ec_delegate");
+    if (!raw) return [];
+    return raw.split(",").map((v) => v.trim()).filter(Boolean);
+  }, [searchParams]);
 
-  const checkout = session.checkoutData as unknown as CheckoutData;
+  const acceptedDelegates = useMemo(
+    () => requestedDelegates.filter((d) => ALLOWED_DELEGATES.includes(d)),
+    [requestedDelegates]
+  );
 
-  const statusColors: Record<string, string> = {
-    incomplete: "bg-yellow-100 text-yellow-800",
-    requires_escalation: "bg-orange-100 text-orange-800",
-    ready_for_complete: "bg-green-100 text-green-800",
-    complete_in_progress: "bg-blue-100 text-blue-800",
-    completed: "bg-green-100 text-green-800",
-    canceled: "bg-gray-100 text-gray-800",
+  const sendMessage = (payload: any) => {
+    if (channelPort.current) {
+      channelPort.current.postMessage(payload);
+      return;
+    }
+    window.parent?.postMessage(payload, "*");
   };
 
-  const total = checkout.totals.find((t) => t.type === "total");
+  const sendRequest = (method: string, params?: Record<string, unknown>) => {
+    const id = `${method}_${crypto.randomUUID()}`;
+    const payload = { jsonrpc: "2.0", id, method, params };
+    return new Promise((resolve) => {
+      pendingRequests.current.set(id, resolve);
+      sendMessage(payload);
+    });
+  };
+
+  useEffect(() => {
+    const handler = (event: MessageEvent) => {
+      const data = event.data;
+      if (!data || typeof data !== "object") return;
+
+      if (event.ports && event.ports[0] && readyRequestId.current && data.id === readyRequestId.current) {
+        channelPort.current = event.ports[0];
+        channelPort.current.onmessage = handler as any;
+      }
+
+      if (data.id && pendingRequests.current.has(data.id)) {
+        const resolver = pendingRequests.current.get(data.id)!;
+        pendingRequests.current.delete(data.id);
+        resolver(data);
+      }
+    };
+
+    window.addEventListener("message", handler);
+    return () => window.removeEventListener("message", handler);
+  }, []);
+
+  useEffect(() => {
+    if (!ecVersion) return;
+    const id = `ready_${crypto.randomUUID()}`;
+    readyRequestId.current = id;
+    sendMessage({
+      jsonrpc: "2.0",
+      id,
+      method: "ec.ready",
+      params: { delegate: acceptedDelegates },
+    });
+  }, [ecVersion, acceptedDelegates]);
+
+  useEffect(() => {
+    if (!ecVersion || !sessionId) return;
+    sendMessage({
+      jsonrpc: "2.0",
+      method: "ec.start",
+      params: { id: sessionId },
+    });
+  }, [ecVersion, sessionId]);
+
+  useEffect(() => {
+    const fetchCheckout = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        if (!sessionId) return;
+        const res = await fetch(`/api/checkout/${sessionId}`, { cache: "no-store" });
+        const data = await res.json();
+        setCheckout(data as CheckoutData);
+        setStatus(data?.status ?? null);
+      } catch (err) {
+        setError((err as Error).message);
+      } finally {
+        setLoading(false);
+      }
+    };
+    if (sessionId) fetchCheckout();
+  }, [sessionId]);
+
+  const requestPaymentCredential = async () => {
+    if (!acceptedDelegates.includes("payment.credential")) return null;
+    const response = (await sendRequest("ec.payment.credential_request", {
+      checkout_id: sessionId,
+    })) as any;
+    return response?.result?.credential ?? response?.result ?? null;
+  };
+
+  const handleComplete = async () => {
+    setIsSubmitting(true);
+    setError(null);
+    try {
+      const credential = await requestPaymentCredential();
+      const payment = credential
+        ? {
+            instruments: [
+              {
+                id: "instrument_1",
+                handler_id: "com.demo.mock_payment",
+                type: "card",
+                selected: true,
+                credential,
+              },
+            ],
+          }
+        : undefined;
+
+      const res = await fetch(`/api/checkout/${sessionId}/complete`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ checkout: { payment } }),
+      });
+      const data = (await res.json()) as CheckoutData;
+      setCheckout(data);
+      setStatus(data.status);
+
+      sendMessage({
+        jsonrpc: "2.0",
+        method: "ec.complete",
+        params: { id: sessionId, order: data.order },
+      });
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  if (loading) return <div style={{ padding: 40, textAlign: "center" }}>Loading checkout...</div>;
+  if (error) return <div style={{ padding: 40, textAlign: "center", color: "#b91c1c" }}>{error}</div>;
 
   return (
-    <div className="min-h-screen bg-gray-50 py-12">
-      <div className="max-w-2xl mx-auto px-4">
-        <div className="bg-white rounded-lg shadow-sm border p-6">
-          <div className="flex items-center justify-between mb-6">
-            <h1 className="text-2xl font-semibold text-gray-900">Checkout</h1>
-            <span
-              className={`px-3 py-1 rounded-full text-sm font-medium ${
-                statusColors[checkout.status] || "bg-gray-100 text-gray-800"
-              }`}
-            >
-              {checkout.status.replace(/_/g, " ")}
-            </span>
+    <div style={{ maxWidth: 520, margin: "40px auto", padding: 24 }}>
+      <h1 style={{ fontSize: 20, fontWeight: 700, marginBottom: 12 }}>Checkout</h1>
+      <p style={{ color: "#666", marginBottom: 16 }}>Session: {sessionId}</p>
+
+      <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 16, marginBottom: 16 }}>
+        <h2 style={{ fontSize: 16, marginBottom: 8 }}>Items</h2>
+        {checkout?.line_items?.map((li, idx) => (
+          <div key={idx} style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+            <span>{li.item.title ?? "Item"}</span>
+            <span>Qty {li.quantity}</span>
           </div>
-
-          <div className="text-sm text-gray-500 mb-6">
-            Session ID: <code className="bg-gray-100 px-2 py-0.5 rounded">{checkout.id}</code>
-          </div>
-
-          {checkout.buyer?.email && (
-            <div className="mb-6 p-4 bg-gray-50 rounded-lg">
-              <h2 className="text-sm font-medium text-gray-700 mb-2">Buyer Information</h2>
-              <p className="text-gray-900">
-                {checkout.buyer.first_name} {checkout.buyer.last_name}
-              </p>
-              <p className="text-gray-600 text-sm">{checkout.buyer.email}</p>
-            </div>
-          )}
-
-          <div className="mb-6">
-            <h2 className="text-sm font-medium text-gray-700 mb-3">Items</h2>
-            <div className="space-y-3">
-              {checkout.line_items.map((item) => {
-                const itemTotal = item.totals.find((t) => t.type === "line_total");
-                return (
-                  <div
-                    key={item.id}
-                    className="flex justify-between items-center p-3 bg-gray-50 rounded-lg"
-                  >
-                    <div>
-                      <p className="font-medium text-gray-900">
-                        {item.item.title || `Product #${item.item.id}`}
-                      </p>
-                      <p className="text-sm text-gray-500">Qty: {item.quantity}</p>
-                    </div>
-                    <p className="font-medium text-gray-900">
-                      {itemTotal
-                        ? formatCurrency(itemTotal.amount, checkout.currency)
-                        : "-"}
-                    </p>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-
-          {total && (
-            <div className="border-t pt-4 mb-6">
-              <div className="flex justify-between items-center text-lg font-semibold">
-                <span>Total</span>
-                <span>{formatCurrency(total.amount, checkout.currency)}</span>
-              </div>
-            </div>
-          )}
-
-          {checkout.messages.length > 0 && (
-            <div className="mb-6">
-              <h2 className="text-sm font-medium text-gray-700 mb-2">Messages</h2>
-              <div className="space-y-2">
-                {checkout.messages.map((msg, i) => (
-                  <div
-                    key={i}
-                    className={`p-3 rounded-lg text-sm ${
-                      msg.type === "error"
-                        ? "bg-red-50 text-red-700"
-                        : msg.type === "warning"
-                        ? "bg-yellow-50 text-yellow-700"
-                        : "bg-blue-50 text-blue-700"
-                    }`}
-                  >
-                    <span className="font-medium">[{msg.code}]</span> {msg.content}
-                    {msg.severity && (
-                      <span className="ml-2 text-xs opacity-75">({msg.severity})</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {checkout.status === "completed" && checkout.order && (
-            <div className="p-4 bg-green-50 rounded-lg border border-green-200">
-              <h2 className="text-sm font-medium text-green-800 mb-2">Order Confirmed!</h2>
-              <p className="text-green-700">
-                Order ID: <code className="bg-green-100 px-2 py-0.5 rounded">{checkout.order.id}</code>
-              </p>
-              {checkout.order.permalink_url && (
-                <Link
-                  href={checkout.order.permalink_url}
-                  className="text-green-600 hover:text-green-800 text-sm underline mt-2 inline-block"
-                >
-                  View Order Details →
-                </Link>
-              )}
-            </div>
-          )}
-
-          {checkout.status === "ready_for_complete" && (
-            <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
-              <p className="text-blue-700 text-sm">
-                This checkout is ready to be completed. In a real implementation, you would
-                see payment options here.
-              </p>
-            </div>
-          )}
-
-          <div className="mt-8 pt-6 border-t text-center">
-            <p className="text-sm text-gray-500">
-              Agentic Commerce Demo - UCP Checkout
-            </p>
-          </div>
+        ))}
+        <div style={{ marginTop: 12 }}>
+          <strong>Status:</strong> {status}
         </div>
       </div>
+
+      <button
+        onClick={handleComplete}
+        disabled={isSubmitting}
+        style={{
+          width: "100%",
+          padding: "12px 16px",
+          background: "#111827",
+          color: "white",
+          borderRadius: 8,
+          border: "none",
+          fontWeight: 600,
+          cursor: "pointer",
+        }}
+      >
+        {isSubmitting ? "Processing..." : "Pay and Complete"}
+      </button>
     </div>
   );
 }

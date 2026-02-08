@@ -50,9 +50,8 @@ import { generateProductListHtml, generateProductDetailHtml, generateRecommendat
 // In-memory store for MCP App resources (per-session)
 const mcpAppsResources = new Map<string, string>();
 
-const checkoutManager = new CheckoutSessionManager();
-
-export function createMcpServer() {
+export function createMcpServer({ baseUrl }: { baseUrl: string }) {
+  const checkoutManager = new CheckoutSessionManager({ baseUrl });
   const server = new McpServer({
     name: ${JSON.stringify(serverName)},
     version: ${JSON.stringify(serverVersion)},
@@ -277,6 +276,10 @@ ${tiers.length > 0 ? `      if (args.preferredTier) conditions.push(eq(products.
     "get_checkout",
     "Retrieve the current state of a checkout session",
     {
+      meta: z.object({
+        "ucp-agent": z.object({ profile: z.string().optional() }).optional(),
+        "idempotency-key": z.string().optional(),
+      }).optional().describe("UCP agent metadata"),
       id: z.string().describe("Checkout session ID"),
     },
     async (args) => {
@@ -289,22 +292,28 @@ ${tiers.length > 0 ? `      if (args.preferredTier) conditions.push(eq(products.
     "update_checkout",
     "Update buyer info or line items on a checkout session",
     {
+      meta: z.object({
+        "ucp-agent": z.object({ profile: z.string().optional() }).optional(),
+        "idempotency-key": z.string().optional(),
+      }).optional().describe("UCP agent metadata"),
       id: z.string().describe("Checkout session ID"),
-      buyer: z.object({
-        email: z.string().optional(),
-        first_name: z.string().optional(),
-        last_name: z.string().optional(),
-        phone: z.string().optional(),
-      }).optional(),
-      line_items: z.array(
-        z.object({
-          item: z.object({ id: z.string() }),
-          quantity: z.number().default(1),
-        })
-      ).optional(),
+      checkout: z.object({
+        buyer: z.object({
+          email: z.string().optional(),
+          first_name: z.string().optional(),
+          last_name: z.string().optional(),
+          phone: z.string().optional(),
+        }).optional(),
+        line_items: z.array(
+          z.object({
+            item: z.object({ id: z.string() }),
+            quantity: z.number().default(1),
+          })
+        ).optional(),
+      }),
     },
     async (args) => {
-      const result = await checkoutManager.updateCheckoutSession(args.id, args);
+      const result = await checkoutManager.updateCheckoutSession(args.id, args.checkout);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );
@@ -313,14 +322,24 @@ ${tiers.length > 0 ? `      if (args.preferredTier) conditions.push(eq(products.
     "complete_checkout",
     "Complete a checkout session and place the order",
     {
+      meta: z.object({
+        "ucp-agent": z.object({ profile: z.string().optional() }).optional(),
+        "idempotency-key": z.string().optional(),
+      }).optional().describe("UCP agent metadata"),
       id: z.string().describe("Checkout session ID"),
-      "idempotency-key": z.string().optional().describe("Idempotency key for safe retries"),
+      checkout: z.object({
+        payment: z.object({
+          instruments: z.array(z.record(z.unknown())).optional(),
+        }).optional(),
+        risk_signals: z.record(z.unknown()).optional(),
+      }).optional(),
+      idempotency_key: z.string().optional().describe("Idempotency key for safe retries"),
     },
     async (args) => {
       const result = await checkoutManager.completeCheckoutSession(
         args.id,
-        {},
-        args["idempotency-key"]
+        args.checkout ?? {},
+        args.idempotency_key
       );
 
       if (result.status === "completed" && result.order) {
@@ -345,11 +364,15 @@ ${tiers.length > 0 ? `      if (args.preferredTier) conditions.push(eq(products.
     "cancel_checkout",
     "Cancel a checkout session",
     {
+      meta: z.object({
+        "ucp-agent": z.object({ profile: z.string().optional() }).optional(),
+        "idempotency-key": z.string().optional(),
+      }).optional().describe("UCP agent metadata"),
       id: z.string().describe("Checkout session ID"),
-      "idempotency-key": z.string().optional().describe("Idempotency key for safe retries"),
+      idempotency_key: z.string().optional().describe("Idempotency key for safe retries"),
     },
     async (args) => {
-      const result = await checkoutManager.cancelCheckoutSession(args.id, args["idempotency-key"]);
+      const result = await checkoutManager.cancelCheckoutSession(args.id, args.idempotency_key);
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
     }
   );

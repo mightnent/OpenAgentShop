@@ -54,6 +54,7 @@ export interface UcpPaymentHandlerRef {
 
 export interface UcpResponseEnvelope {
   version: string;
+  services?: Record<string, Array<{ version: string; transport: string; endpoint?: string; spec?: string; schema?: string; config?: Record<string, unknown> }>>;
   capabilities: Record<string, UcpCapabilityVersion[]>;
   payment_handlers?: Record<string, UcpPaymentHandlerRef[]>;
 }

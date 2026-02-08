@@ -139,6 +139,10 @@ The SDK automatically detects your deployed URL at runtime from request headers:
 
 This means you can deploy to platforms like Manus, Vercel, or Netlify without knowing the URL ahead of time. The `/.well-known/ucp` endpoint will automatically use the correct URL.
 
+### Strict Mode
+
+Set `UCP_STRICT=true` to enforce HTTPS for non-localhost and omit non-spec fields from `/.well-known/ucp`. This is recommended for production.
+
 ### Custom Namespace
 
 To use your own namespace instead of `dev.ucp.*`:
@@ -153,7 +157,7 @@ To use your own namespace instead of `dev.ucp.*`:
 }
 ```
 
-**Note:** When using a custom namespace, you must host your capability specs at your domain (e.g., `https://mystore.com/specs/checkout`).
+**Note:** When using a custom namespace, you must host your capability specs at your domain (e.g., `https://mystore.com/specification/checkout`).
 
 See [UCP Integration](./ucp-integration.md) for detailed payment handler setup.
 

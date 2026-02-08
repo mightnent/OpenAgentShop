@@ -120,7 +120,8 @@ export type MessageSeverity =
 export interface UcpMessage {
   type: MessageType;
   code: string;
-  message: string;
+  content: string;
+  content_type?: string;
   severity?: MessageSeverity;
   path?: string;
 }
@@ -130,9 +131,9 @@ export interface UcpMessage {
 // ---------------------------------------------------------------------------
 
 export interface UcpLink {
-  rel: string;
-  href: string;
-  type?: string;
+  type: string;
+  url: string;
+  title?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -190,9 +191,19 @@ export interface UcpPaymentHandlerDeclaration {
   config: Record<string, unknown>;
 }
 
+export interface UcpServiceBinding {
+  version: string;
+  transport: "rest" | "mcp" | "a2a" | "embedded";
+  endpoint?: string;
+  spec?: string;
+  schema?: string;
+  config?: Record<string, unknown>;
+}
+
 export interface UcpEnvelope {
   ucp: {
     version: string;
+    services?: Record<string, UcpServiceBinding[]>;
     capabilities: Record<string, UcpCapabilityDeclaration[]>;
     payment_handlers?: Record<string, UcpPaymentHandlerDeclaration[]>;
   };
@@ -227,17 +238,25 @@ export interface CreateCheckoutInput {
 }
 
 export interface UpdateCheckoutInput {
+  meta?: UcpMcpMeta;
   id: string;
-  buyer?: UcpBuyer;
-  line_items?: Array<{
-    item: { id: string };
-    quantity: number;
-  }>;
+  checkout: {
+    buyer?: UcpBuyer;
+    line_items?: Array<{
+      item: { id: string };
+      quantity: number;
+    }>;
+  };
 }
 
 export interface CompleteCheckoutInput {
-  payment?: UcpPayment;
-  risk_signals?: Record<string, unknown>;
+  meta?: UcpMcpMeta;
+  id: string;
+  checkout?: {
+    payment?: UcpPayment;
+    risk_signals?: Record<string, unknown>;
+  };
+  idempotency_key?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -245,13 +264,11 @@ export interface CompleteCheckoutInput {
 // ---------------------------------------------------------------------------
 
 export interface UcpProfile {
-  version: string;
-  business: {
-    name: string;
-    url: string;
+  ucp: {
+    version: string;
+    services: Record<string, UcpServiceBinding[]>;
+    capabilities: Record<string, UcpCapabilityDeclaration[]>;
+    payment_handlers?: Record<string, UcpPaymentHandlerDeclaration[]>;
   };
-  capabilities: Record<string, UcpCapabilityDeclaration[]>;
-  services: Record<string, Array<{ version: string; endpoint: string }>>;
-  payment_handlers?: Record<string, UcpPaymentHandlerDeclaration[]>;
   signing_keys?: Array<{ kid: string; kty: string; [key: string]: unknown }>;
 }

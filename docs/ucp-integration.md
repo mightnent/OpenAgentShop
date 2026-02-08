@@ -1,10 +1,12 @@
 # UCP Integration
 
-OpenAgentShop implements the [Universal Commerce Protocol (UCP)](https://ucp.dev) for standardized agentic commerce. This document covers the UCP implementation details and how to configure it for production use.
+OpenAgentShop implements the [Universal Commerce Protocol (UCP)](https://ucp.dev) for standardized agentic commerce. This document covers the UCP implementation details, ECP embedded checkout, and how to configure production behavior.
 
 ## UCP Overview
 
-UCP is an open standard protocol (version 2026-01-11) that enables AI agents, apps, and services to discover businesses and complete purchases. OpenAgentShop implements the **Checkout** capability via MCP transport.
+UCP is an open standard protocol (version 2026-01-11) that enables AI agents, apps, and services to discover businesses and complete purchases. OpenAgentShop implements the **Checkout** capability via MCP transport and supports **Embedded Checkout Protocol (ECP)** via `continue_url`.
+
+See [Embedded Checkout (ECP)](./embedded-checkout-ecp.md) for end-to-end flow details.
 
 ### Key Concepts
 
@@ -22,9 +24,7 @@ The Checkout capability enables platforms to create, manage, and complete checko
 **Status lifecycle:**
 
 ```
-incomplete ──────────► ready_for_complete ──────► completed
-     │
-     ├──► requires_escalation (needs buyer action via continue_url)
+incomplete ──────────► requires_escalation ──────► ready_for_complete ──────► complete_in_progress ──────► completed
      │
      └──► canceled (from any non-terminal state)
 ```
@@ -47,6 +47,15 @@ Every checkout response follows the UCP envelope format:
 {
   "ucp": {
     "version": "2026-01-11",
+    "services": {
+      "dev.ucp.shopping": [
+        {
+          "version": "2026-01-11",
+          "transport": "embedded",
+          "config": { "delegate": ["payment.credential"] }
+        }
+      ]
+    },
     "capabilities": {
       "dev.ucp.shopping.checkout": [{ "version": "2026-01-11" }]
     },
@@ -59,7 +68,7 @@ Every checkout response follows the UCP envelope format:
     }
   },
   "id": "checkout_abc123",
-  "status": "incomplete",
+  "status": "requires_escalation",
   "currency": "USD",
   "buyer": { "email": "...", "first_name": "...", "last_name": "..." },
   "line_items": [
@@ -78,7 +87,14 @@ Every checkout response follows the UCP envelope format:
     { "type": "tax", "amount": 240 },
     { "type": "total", "amount": 3239 }
   ],
-  "messages": [],
+  "messages": [
+    {
+      "type": "info",
+      "code": "payment_required",
+      "content": "Payment details are required to complete checkout.",
+      "severity": "requires_buyer_review"
+    }
+  ],
   "continue_url": "http://localhost:3000/checkout/checkout_abc123"
 }
 ```
@@ -106,27 +122,48 @@ Platforms handle severity as follows:
 
 ## UCP Profile Discovery
 
-The generated app serves a UCP profile at `/.well-known/ucp`:
+The generated app serves a UCP profile at `/.well-known/ucp` with a top-level `ucp` object:
 
 ```json
 {
-  "version": "2026-01-11",
+  "ucp": {
+    "version": "2026-01-11",
+    "services": {
+      "dev.ucp.shopping": [
+        {
+          "version": "2026-01-11",
+          "transport": "mcp",
+          "endpoint": "http://localhost:3000/api/mcp",
+          "spec": "https://ucp.dev/specification/checkout-mcp",
+          "schema": "https://ucp.dev/services/shopping/mcp.openrpc.json"
+        },
+        {
+          "version": "2026-01-11",
+          "transport": "embedded",
+          "endpoint": "http://localhost:3000/checkout",
+          "spec": "https://ucp.dev/specification/embedded-checkout",
+          "schema": "https://ucp.dev/services/shopping/embedded.openrpc.json",
+          "config": { "continue_url_template": "http://localhost:3000/checkout/{id}" }
+        }
+      ]
+    },
+    "capabilities": {
+      "dev.ucp.shopping.checkout": [{
+        "version": "2026-01-11",
+        "spec": "https://ucp.dev/specification/checkout",
+        "schema": "https://ucp.dev/schemas/shopping/checkout.json"
+      }]
+    },
+    "payment_handlers": { ... }
+  },
   "business": {
     "name": "My Store",
     "url": "http://localhost:3000"
-  },
-  "capabilities": {
-    "dev.ucp.shopping.checkout": [{ "version": "2026-01-11" }]
-  },
-  "services": {
-    "dev.ucp.mcp": [{
-      "version": "2025-11-25",
-      "endpoint": "http://localhost:3000/api/mcp"
-    }]
-  },
-  "payment_handlers": { ... }
+  }
 }
 ```
+
+> In `UCP_STRICT=true`, the `business` convenience block is omitted.
 
 ## Configuration
 
@@ -199,14 +236,19 @@ Enable UCP extensions for additional functionality:
 | AP2 Mandates | `ap2_mandate` | Cryptographic proof of authorization for autonomous agents |
 | Buyer Consent | `buyer_consent` | GDPR/CCPA privacy consent management |
 
+## Strict vs Compat Mode
+
+- `UCP_STRICT=false` (default): allows localhost HTTP, includes the `business` convenience block in `/.well-known/ucp`.
+- `UCP_STRICT=true`: enforces HTTPS for non-localhost and omits non-spec fields.
+
 ## Production Checklist
 
 - [ ] Replace mock payment handler with a production handler
 - [ ] Restrict CORS origins (modify `next.config.js`)
 - [ ] Add authentication to merchant API routes
-- [ ] Implement proper idempotency for checkout completion
-- [ ] Set `NEXT_PUBLIC_BASE_URL` to your production domain
-- [ ] Configure SSL/TLS (UCP requires HTTPS in production)
+- [ ] Implement proper idempotency for checkout completion (default now includes `ucp_idempotency_keys`)
+- [ ] Set `NEXT_PUBLIC_BASE_URL` for nonstandard proxy setups (optional; base URL is auto-detected)
+- [ ] Configure SSL/TLS (UCP strict mode requires HTTPS in production)
 - [ ] Implement webhook endpoints for order fulfillment updates
 - [ ] Add monitoring and logging
 

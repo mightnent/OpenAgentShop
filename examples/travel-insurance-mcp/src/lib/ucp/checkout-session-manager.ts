@@ -13,24 +13,60 @@ import type {
 
 const UCP_VERSION = "2026-01-11";
 
-const UCP_ENVELOPE: UcpResponseEnvelope = {
-  version: UCP_VERSION,
-  capabilities: {
-    "dev.ucp.shopping.checkout": [{ version: UCP_VERSION }],
-  },
-  payment_handlers: {
-    "com.demo.mock_payment": [
-      {
-        id: "mock_handler_1",
-        version: UCP_VERSION,
-        config: {},
-      },
-    ],
-  },
-};
+function buildUcpEnvelope(baseUrl: string): UcpResponseEnvelope {
+  return {
+    version: UCP_VERSION,
+    services: {
+      "dev.ucp.shopping": [
+        {
+          version: UCP_VERSION,
+          transport: "mcp",
+          endpoint: `${baseUrl}/api/mcp`,
+          spec: "https://ucp.dev/specification/checkout-mcp",
+          schema: "https://ucp.dev/services/shopping/mcp.openrpc.json",
+        },
+        {
+          version: UCP_VERSION,
+          transport: "embedded",
+          endpoint: `${baseUrl}/checkout`,
+          spec: "https://ucp.dev/specification/embedded-checkout",
+          schema: "https://ucp.dev/services/shopping/embedded.openrpc.json",
+          config: {
+            delegate: ["payment.instruments_change", "payment.credential"],
+            continue_url_template: `${baseUrl}/checkout/{id}`,
+          },
+        },
+      ],
+    },
+    capabilities: {
+      "dev.ucp.shopping.checkout": [{ version: UCP_VERSION }],
+    },
+    payment_handlers: {
+      "com.demo.mock_payment": [
+        {
+          id: "mock_handler_1",
+          version: UCP_VERSION,
+          config: {},
+        },
+      ],
+    },
+  };
+}
 
 const TAX_RATE = 0.08;
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+
+function getBaseUrl() {
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3002";
+  if (
+    process.env.UCP_STRICT === "true" &&
+    baseUrl.startsWith("http://") &&
+    !baseUrl.includes("localhost")
+  ) {
+    return baseUrl.replace("http://", "https://");
+  }
+  return baseUrl;
+}
 
 function generateCheckoutId(): string {
   return `checkout_${crypto.randomUUID().replace(/-/g, "").substring(0, 12)}`;
@@ -206,10 +242,11 @@ export async function createCheckoutSession(
   const { status, messages } = evaluateStatus(buyer, lineItems, itemErrors);
 
   const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3002";
+  const baseUrl = getBaseUrl();
+  const ucp = buildUcpEnvelope(baseUrl);
 
   const checkoutResponse: UcpCheckoutResponse = {
-    ucp: UCP_ENVELOPE,
+    ucp,
     id,
     status,
     buyer,
@@ -248,7 +285,7 @@ export async function getCheckoutSession(
 
   // Return stored checkout data with fresh UCP envelope
   const data = session.checkoutData as unknown as UcpCheckoutResponse;
-  return { ...data, ucp: UCP_ENVELOPE };
+  return { ...data, ucp: buildUcpEnvelope(getBaseUrl()) };
 }
 
 export async function updateCheckoutSession(
@@ -268,7 +305,7 @@ export async function updateCheckoutSession(
   if (existing.status === "completed" || existing.status === "canceled") {
     return {
       ...existing,
-      ucp: UCP_ENVELOPE,
+      ucp: buildUcpEnvelope(getBaseUrl()),
       messages: [
         {
           type: "error",
@@ -298,10 +335,10 @@ export async function updateCheckoutSession(
   const totals = computeTotals(lineItems);
   const { status, messages } = evaluateStatus(buyer, lineItems, itemErrors);
 
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3002";
+  const baseUrl = getBaseUrl();
 
   const checkoutResponse: UcpCheckoutResponse = {
-    ucp: UCP_ENVELOPE,
+    ucp: buildUcpEnvelope(baseUrl),
     id,
     status,
     buyer,
@@ -344,7 +381,7 @@ export async function completeCheckoutSession(
   if (existing.status !== "ready_for_complete") {
     return {
       ...existing,
-      ucp: UCP_ENVELOPE,
+      ucp: buildUcpEnvelope(getBaseUrl()),
       messages: [
         {
           type: "error",
@@ -381,11 +418,11 @@ export async function completeCheckoutSession(
     orderId = order.id;
   }
 
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "http://localhost:3002";
+  const baseUrl = getBaseUrl();
 
   const checkoutResponse: UcpCheckoutResponse = {
     ...existing,
-    ucp: UCP_ENVELOPE,
+    ucp: buildUcpEnvelope(baseUrl),
     status: "completed",
     messages: [],
     order: orderId
@@ -425,7 +462,7 @@ export async function cancelCheckoutSession(
   if (existing.status === "completed" || existing.status === "canceled") {
     return {
       ...existing,
-      ucp: UCP_ENVELOPE,
+      ucp: buildUcpEnvelope(getBaseUrl()),
       messages: [
         {
           type: "error",
@@ -439,7 +476,7 @@ export async function cancelCheckoutSession(
 
   const checkoutResponse: UcpCheckoutResponse = {
     ...existing,
-    ucp: UCP_ENVELOPE,
+    ucp: buildUcpEnvelope(getBaseUrl()),
     status: "canceled",
     messages: [],
   };

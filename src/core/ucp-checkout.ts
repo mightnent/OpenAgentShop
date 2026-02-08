@@ -81,26 +81,32 @@ export function generateCheckoutManagerSource(
     }
   }
 
+  // Determine if using standard namespace
+  const useStandardNamespace = ucpNamespace.startsWith("dev.ucp");
+  const namespaceAuthority = "";
+  const serviceName = useStandardNamespace ? "dev.ucp.shopping" : ucpNamespace;
+
   return `import { db } from "@/db";
-import { products, orders, checkoutSessions } from "@/db/schema";
-import { eq } from "drizzle-orm";
-import { calculateTotals, formatCurrencyDisplay } from "@/lib/currency";
+import { products, orders, checkoutSessions, ucpIdempotencyKeys } from "@/db/schema";
+import { eq, and } from "drizzle-orm";
+import { calculateTotals } from "@/lib/currency";
 
 const UCP_VERSION = ${JSON.stringify(ucpVersion)};
 const CURRENCY = ${JSON.stringify(currency)};
 const TAX_RATE = ${taxRate};
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const SHOP_URL = ${JSON.stringify(shopUrl)};
+const SPEC_AUTHORITY = ${JSON.stringify(useStandardNamespace ? "https://ucp.dev" : namespaceAuthority)};
+const SERVICE_NAME = ${JSON.stringify(serviceName)};
+const DEFAULT_DELEGATES = ["payment.instruments_change", "payment.credential"];
 
-const UCP_ENVELOPE = {
-  ucp: {
-    version: UCP_VERSION,
-    capabilities: ${JSON.stringify(capabilities, null, 4).replace(/\n/g, "\n    ")},
-    payment_handlers: ${JSON.stringify(paymentHandlers, null, 4).replace(/\n/g, "\n    ")},
-  },
-};
-
-type CheckoutStatus = "incomplete" | "ready_for_complete" | "requires_escalation" | "completed" | "canceled";
+type CheckoutStatus =
+  | "incomplete"
+  | "ready_for_complete"
+  | "requires_escalation"
+  | "complete_in_progress"
+  | "completed"
+  | "canceled";
 const TERMINAL_STATUSES: CheckoutStatus[] = ["completed", "canceled"];
 
 interface LineItemInput {
@@ -129,38 +135,94 @@ interface ResolvedLineItem {
   totals: Array<{ type: string; amount: number }>;
 }
 
-function makeResponse(data: Record<string, unknown>) {
-  return { ...UCP_ENVELOPE, ...data };
+function buildUcpEnvelope(baseUrl: string, delegate: string[]) {
+  const authority = SPEC_AUTHORITY || undefined;
+  const services = {
+    [SERVICE_NAME]: [
+      {
+        version: UCP_VERSION,
+        transport: "mcp",
+        endpoint: \`\${baseUrl}/api/mcp\`,
+        spec: authority ? \`\${authority}/specification/checkout-mcp\` : undefined,
+        schema: authority ? \`\${authority}/services/shopping/mcp.openrpc.json\` : undefined,
+      },
+      {
+        version: UCP_VERSION,
+        transport: "embedded",
+        endpoint: \`\${baseUrl}/checkout\`,
+        spec: authority ? \`\${authority}/specification/embedded-checkout\` : undefined,
+        schema: authority ? \`\${authority}/services/shopping/embedded.openrpc.json\` : undefined,
+        config: {
+          delegate,
+          continue_url_template: \`\${baseUrl}/checkout/{id}\`,
+        },
+      },
+    ],
+  };
+
+  return {
+    ucp: {
+      version: UCP_VERSION,
+      services,
+      capabilities: ${JSON.stringify(capabilities, null, 4).replace(/\n/g, "\n      ")},
+      payment_handlers: ${JSON.stringify(paymentHandlers, null, 4).replace(/\n/g, "\n      ")},
+    },
+  };
 }
 
-function evaluateStatus(buyer?: BuyerInput, lineItems?: ResolvedLineItem[]): { status: CheckoutStatus; messages: Array<{ type: string; code: string; message: string; severity: string; path?: string }> } {
-  const messages: Array<{ type: string; code: string; message: string; severity: string; path?: string }> = [];
+function makeResponse(data: Record<string, unknown>, baseUrl: string, delegate: string[] = DEFAULT_DELEGATES) {
+  return { ...buildUcpEnvelope(baseUrl, delegate), ...data };
+}
+
+function evaluateStatus(
+  buyer?: BuyerInput,
+  lineItems?: ResolvedLineItem[],
+  payment?: { instruments?: Array<{ credential?: unknown }> }
+): {
+  status: CheckoutStatus;
+  messages: Array<{ type: string; code: string; content: string; severity: string; path?: string }>;
+} {
+  const messages: Array<{ type: string; code: string; content: string; severity: string; path?: string }> = [];
 
   if (!lineItems || lineItems.length === 0) {
-    messages.push({ type: "error", code: "empty_cart", message: "Cart is empty", severity: "recoverable" });
+    messages.push({ type: "error", code: "empty_cart", content: "Cart is empty", severity: "recoverable" });
     return { status: "incomplete", messages };
   }
 
   if (!buyer?.email) {
-    messages.push({ type: "error", code: "missing_buyer_email", message: "Buyer email is required", severity: "requires_buyer_input", path: "$.buyer.email" });
+    messages.push({ type: "error", code: "missing_buyer_email", content: "Buyer email is required", severity: "requires_buyer_input", path: "$.buyer.email" });
   }
   if (!buyer?.first_name) {
-    messages.push({ type: "error", code: "missing_buyer_first_name", message: "Buyer first name is required", severity: "requires_buyer_input", path: "$.buyer.first_name" });
+    messages.push({ type: "error", code: "missing_buyer_first_name", content: "Buyer first name is required", severity: "requires_buyer_input", path: "$.buyer.first_name" });
   }
   if (!buyer?.last_name) {
-    messages.push({ type: "error", code: "missing_buyer_last_name", message: "Buyer last name is required", severity: "requires_buyer_input", path: "$.buyer.last_name" });
+    messages.push({ type: "error", code: "missing_buyer_last_name", content: "Buyer last name is required", severity: "requires_buyer_input", path: "$.buyer.last_name" });
   }
 
   const hasErrors = messages.some((m) => m.type === "error");
-  return {
-    status: hasErrors ? "incomplete" : "ready_for_complete",
-    messages,
-  };
+  const hasCredential =
+    payment?.instruments?.some((instrument) => Boolean(instrument?.credential)) ?? false;
+
+  if (hasErrors) {
+    return { status: "incomplete", messages };
+  }
+
+  if (!hasCredential) {
+    messages.push({
+      type: "info",
+      code: "payment_required",
+      content: "Payment details are required to complete checkout.",
+      severity: "requires_buyer_review",
+    });
+    return { status: "requires_escalation", messages };
+  }
+
+  return { status: "ready_for_complete", messages };
 }
 
-async function resolveLineItems(items: LineItemInput[] | undefined): Promise<{ resolved: ResolvedLineItem[]; messages: Array<{ type: string; code: string; message: string; severity: string }> }> {
+async function resolveLineItems(items: LineItemInput[] | undefined): Promise<{ resolved: ResolvedLineItem[]; messages: Array<{ type: string; code: string; content: string; severity: string }> }> {
   const resolved: ResolvedLineItem[] = [];
-  const messages: Array<{ type: string; code: string; message: string; severity: string }> = [];
+  const messages: Array<{ type: string; code: string; content: string; severity: string }> = [];
 
   if (!items || !Array.isArray(items)) {
     return { resolved, messages };
@@ -183,11 +245,11 @@ async function resolveLineItems(items: LineItemInput[] | undefined): Promise<{ r
     }
 
     if (!product) {
-      messages.push({ type: "error", code: "item_not_found", message: \`Product "\${itemId}" not found\`, severity: "recoverable" });
+      messages.push({ type: "error", code: "item_not_found", content: \`Product "\${itemId}" not found\`, severity: "recoverable" });
       continue;
     }
     if (!product.active) {
-      messages.push({ type: "error", code: "item_unavailable", message: \`Product "\${product.name}" is not available\`, severity: "recoverable" });
+      messages.push({ type: "error", code: "item_unavailable", content: \`Product "\${product.name}" is not available\`, severity: "recoverable" });
       continue;
     }
 
@@ -236,10 +298,30 @@ function computeTotals(lineItems: ResolvedLineItem[] | undefined) {
   return totals;
 }
 
+function resolveBaseUrl(preferred?: string) {
+  let baseUrl = preferred || process.env.NEXT_PUBLIC_BASE_URL || SHOP_URL;
+  const strict = process.env.UCP_STRICT === "true";
+  if (strict && baseUrl.startsWith("http://") && !baseUrl.includes("localhost")) {
+    baseUrl = baseUrl.replace("http://", "https://");
+  }
+  return baseUrl;
+}
+
 export class CheckoutSessionManager {
-  async createCheckoutSession(input: { meta?: Record<string, unknown>; checkout: { buyer?: BuyerInput; line_items: LineItemInput[] } }) {
+  private baseUrl?: string;
+
+  constructor({ baseUrl }: { baseUrl?: string } = {}) {
+    this.baseUrl = baseUrl;
+  }
+
+  private getBaseUrl() {
+    return resolveBaseUrl(this.baseUrl);
+  }
+
+  async createCheckoutSession(input: { meta?: Record<string, unknown>; checkout: { buyer?: BuyerInput; line_items: LineItemInput[]; payment?: { instruments?: Array<{ credential?: unknown }> } } }) {
     const sessionId = \`checkout_\${crypto.randomUUID()}\`;
     const lineItemsInput = input.checkout?.line_items || [];
+    const baseUrl = this.getBaseUrl();
     
     // Guard against empty or invalid line_items
     if (!Array.isArray(lineItemsInput) || lineItemsInput.length === 0) {
@@ -249,8 +331,8 @@ export class CheckoutSessionManager {
         currency: CURRENCY,
         line_items: [],
         totals: [],
-        messages: [{ type: "error", code: "empty_cart", message: "Cart is empty", severity: "recoverable" }],
-      });
+        messages: [{ type: "error", code: "empty_cart", content: "Cart is empty", severity: "recoverable" }],
+      }, baseUrl);
     }
 
     const { resolved, messages: itemMessages } = await resolveLineItems(lineItemsInput);
@@ -263,11 +345,15 @@ export class CheckoutSessionManager {
         line_items: [],
         totals: [],
         messages: itemMessages,
-      });
+      }, baseUrl);
     }
 
     const totals = computeTotals(resolved);
-    const { status, messages: statusMessages } = evaluateStatus(input.checkout.buyer, resolved);
+    const { status, messages: statusMessages } = evaluateStatus(
+      input.checkout.buyer,
+      resolved,
+      input.checkout.payment
+    );
     const allMessages = [...itemMessages, ...statusMessages];
 
     const checkoutData = {
@@ -278,7 +364,8 @@ export class CheckoutSessionManager {
       line_items: resolved,
       totals,
       messages: allMessages.length > 0 ? allMessages : undefined,
-      continue_url: \`\${SHOP_URL}/checkout/\${sessionId}\`,
+      payment: input.checkout.payment,
+      continue_url: \`\${baseUrl}/checkout/\${sessionId}\`,
     };
 
     await db.insert(checkoutSessions).values({
@@ -289,34 +376,36 @@ export class CheckoutSessionManager {
       expiresAt: new Date(Date.now() + SESSION_TTL_MS),
     });
 
-    return makeResponse(checkoutData);
+    return makeResponse(checkoutData, baseUrl);
   }
 
   async getCheckoutSession(id: string) {
+    const baseUrl = this.getBaseUrl();
     const rows = await db.select().from(checkoutSessions).where(eq(checkoutSessions.id, id)).limit(1);
     if (rows.length === 0) {
-      return makeResponse({ error: "Checkout session not found", status: "error" });
+      return makeResponse({ error: "Checkout session not found", status: "error" }, baseUrl);
     }
-    return makeResponse(rows[0].checkoutData as Record<string, unknown>);
+    return makeResponse(rows[0].checkoutData as Record<string, unknown>, baseUrl);
   }
 
-  async updateCheckoutSession(id: string, input: { buyer?: BuyerInput; line_items?: LineItemInput[] }) {
+  async updateCheckoutSession(id: string, input: { buyer?: BuyerInput; line_items?: LineItemInput[]; payment?: { instruments?: Array<{ credential?: unknown }> } }) {
+    const baseUrl = this.getBaseUrl();
     const rows = await db.select().from(checkoutSessions).where(eq(checkoutSessions.id, id)).limit(1);
     if (rows.length === 0) {
-      return makeResponse({ error: "Checkout session not found", status: "error" });
+      return makeResponse({ error: "Checkout session not found", status: "error" }, baseUrl);
     }
 
     const session = rows[0];
     if (TERMINAL_STATUSES.includes(session.status as CheckoutStatus)) {
       return makeResponse({
         ...(session.checkoutData as Record<string, unknown>),
-        messages: [{ type: "error", code: "checkout_immutable", message: "Cannot update a completed or canceled checkout", severity: "recoverable" }],
-      });
+        messages: [{ type: "error", code: "checkout_immutable", content: "Cannot update a completed or canceled checkout", severity: "recoverable" }],
+      }, baseUrl);
     }
 
     const existingData = session.checkoutData as Record<string, unknown>;
     let resolvedItems = existingData.line_items as ResolvedLineItem[];
-    const allMessages: Array<{ type: string; code: string; message: string; severity: string }> = [];
+    const allMessages: Array<{ type: string; code: string; content: string; severity: string }> = [];
 
     if (input.line_items && Array.isArray(input.line_items) && input.line_items.length > 0) {
       const { resolved, messages } = await resolveLineItems(input.line_items);
@@ -329,7 +418,8 @@ export class CheckoutSessionManager {
       : existingData.buyer;
 
     const totals = computeTotals(resolvedItems);
-    const { status, messages: statusMessages } = evaluateStatus(buyer as BuyerInput, resolvedItems);
+    const payment = input.payment ?? (existingData.payment as { instruments?: Array<{ credential?: unknown }> } | undefined);
+    const { status, messages: statusMessages } = evaluateStatus(buyer as BuyerInput, resolvedItems, payment);
     allMessages.push(...statusMessages);
 
     const updatedData = {
@@ -339,6 +429,8 @@ export class CheckoutSessionManager {
       totals,
       status,
       messages: allMessages.length > 0 ? allMessages : undefined,
+      payment,
+      continue_url: \`\${baseUrl}/checkout/\${id}\`,
     };
 
     await db
@@ -350,36 +442,64 @@ export class CheckoutSessionManager {
       })
       .where(eq(checkoutSessions.id, id));
 
-    return makeResponse(updatedData);
+    return makeResponse(updatedData, baseUrl);
   }
 
-  async completeCheckoutSession(id: string, _checkoutInput: Record<string, unknown>, _idempotencyKey?: string) {
+  async completeCheckoutSession(id: string, checkoutInput: Record<string, unknown>, idempotencyKey?: string) {
+    const baseUrl = this.getBaseUrl();
     const rows = await db.select().from(checkoutSessions).where(eq(checkoutSessions.id, id)).limit(1);
     if (rows.length === 0) {
-      return makeResponse({ error: "Checkout session not found", status: "error" });
+      return makeResponse({ error: "Checkout session not found", status: "error" }, baseUrl);
     }
 
     const session = rows[0];
     const data = session.checkoutData as Record<string, unknown>;
 
-    if (session.status !== "ready_for_complete") {
+    if (idempotencyKey) {
+      const prior = await db
+        .select()
+        .from(ucpIdempotencyKeys)
+        .where(and(eq(ucpIdempotencyKeys.key, idempotencyKey), eq(ucpIdempotencyKeys.scope, "complete_checkout"), eq(ucpIdempotencyKeys.checkoutId, id)))
+        .limit(1);
+      if (prior.length > 0) {
+        return prior[0].response as Record<string, unknown>;
+      }
+    }
+
+    const mergedData = {
+      ...data,
+      ...(checkoutInput || {}),
+    };
+
+    const paymentInput = (checkoutInput as any)?.payment;
+    const lineItems = (mergedData.line_items as ResolvedLineItem[]) || [];
+    const totals = (mergedData.totals as Array<{ type: string; amount: number }>) || [];
+    const totalAmount = totals.find((t) => t.type === "total")?.amount ?? 0;
+    const buyer = mergedData.buyer as BuyerInput;
+
+    const { status, messages: statusMessages } = evaluateStatus(
+      buyer,
+      lineItems,
+      paymentInput ?? (mergedData.payment as { instruments?: Array<{ credential?: unknown }> } | undefined)
+    );
+
+    if (status !== "ready_for_complete") {
       return makeResponse({
-        ...data,
-        messages: [{ type: "error", code: "checkout_not_ready", message: \`Checkout status is "\${session.status}", must be "ready_for_complete"\`, severity: "recoverable" }],
-      });
+        ...mergedData,
+        status,
+        messages: [
+          ...statusMessages,
+          { type: "error", code: "checkout_not_ready", content: \`Checkout status is "\${session.status}", must be "ready_for_complete"\`, severity: "recoverable" },
+        ],
+      }, baseUrl);
     }
 
     // Create order
-    const lineItems = (data.line_items as ResolvedLineItem[]) || [];
-    const totals = (data.totals as Array<{ type: string; amount: number }>) || [];
-    const totalAmount = totals.find((t) => t.type === "total")?.amount ?? 0;
-    const buyer = data.buyer as BuyerInput;
-
     if (lineItems.length === 0) {
       return makeResponse({
-        ...data,
-        messages: [{ type: "error", code: "empty_cart", message: "Cannot complete checkout with no items", severity: "recoverable" }],
-      });
+        ...mergedData,
+        messages: [{ type: "error", code: "empty_cart", content: "Cannot complete checkout with no items", severity: "recoverable" }],
+      }, baseUrl);
     }
 
     const [order] = await db
@@ -398,13 +518,13 @@ export class CheckoutSessionManager {
       .set({
         status: "completed",
         orderId: order.id,
-        checkoutData: { ...data, status: "completed", order: { id: String(order.id) } },
+        checkoutData: { ...mergedData, status: "completed", order: { id: String(order.id) } },
         updatedAt: new Date(),
       })
       .where(eq(checkoutSessions.id, id));
 
-    return makeResponse({
-      ...data,
+    const response = makeResponse({
+      ...mergedData,
       status: "completed",
       order: {
         id: String(order.id),
@@ -412,21 +532,33 @@ export class CheckoutSessionManager {
         total: totalAmount,
         currency: session.currency,
       },
-    });
+    }, baseUrl);
+
+    if (idempotencyKey) {
+      await db.insert(ucpIdempotencyKeys).values({
+        key: idempotencyKey,
+        scope: "complete_checkout",
+        checkoutId: id,
+        response,
+      });
+    }
+
+    return response;
   }
 
   async cancelCheckoutSession(id: string, _idempotencyKey?: string) {
+    const baseUrl = this.getBaseUrl();
     const rows = await db.select().from(checkoutSessions).where(eq(checkoutSessions.id, id)).limit(1);
     if (rows.length === 0) {
-      return makeResponse({ error: "Checkout session not found", status: "error" });
+      return makeResponse({ error: "Checkout session not found", status: "error" }, baseUrl);
     }
 
     const session = rows[0];
     if (TERMINAL_STATUSES.includes(session.status as CheckoutStatus)) {
       return makeResponse({
         ...(session.checkoutData as Record<string, unknown>),
-        messages: [{ type: "error", code: "checkout_not_cancelable", message: "Cannot cancel a completed or already canceled checkout", severity: "recoverable" }],
-      });
+        messages: [{ type: "error", code: "checkout_not_cancelable", content: "Cannot cancel a completed or already canceled checkout", severity: "recoverable" }],
+      }, baseUrl);
     }
 
     const updatedData = { ...(session.checkoutData as Record<string, unknown>), status: "canceled" };
@@ -436,7 +568,7 @@ export class CheckoutSessionManager {
       .set({ status: "canceled", checkoutData: updatedData, updatedAt: new Date() })
       .where(eq(checkoutSessions.id, id));
 
-    return makeResponse(updatedData);
+    return makeResponse(updatedData, baseUrl);
   }
 }
 `;

@@ -95,25 +95,27 @@ export async function DELETE(
  * Generate the orders list route handler.
  */
 export function generateOrdersRouteSource(): string {
-  return `import { NextResponse } from "next/server";
+return `import { NextResponse } from "next/server";
 import { db } from "@/db";
 import { orders, products } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
+
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET() {
-  const allOrders = await db
-    .select({
-      order: orders,
-      productName: products.name,
-    })
-    .from(orders)
-    .leftJoin(products, eq(orders.productId, products.id))
-    .orderBy(orders.createdAt);
+  const orderRows = await db.select().from(orders).orderBy(orders.createdAt);
+  const productIds = Array.from(new Set(orderRows.map((o) => o.productId)));
+  const productRows = productIds.length
+    ? await db.select().from(products).where(inArray(products.id, productIds))
+    : [];
+
+  const productMap = new Map(productRows.map((p) => [p.id, p.name]));
 
   return NextResponse.json(
-    allOrders.map((row) => ({
-      ...row.order,
-      productName: row.productName,
+    orderRows.map((order) => ({
+      ...order,
+      productName: productMap.get(order.productId) ?? "Unknown",
     }))
   );
 }

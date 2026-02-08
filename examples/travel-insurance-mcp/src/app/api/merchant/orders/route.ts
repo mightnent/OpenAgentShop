@@ -1,29 +1,23 @@
 import { db } from "@/db";
 import { orders, products } from "@/db/schema";
-import { desc, eq } from "drizzle-orm";
+import { desc, inArray } from "drizzle-orm";
 import { NextResponse } from "next/server";
 
 export async function GET() {
   try {
-    const ordersWithProducts = await db
-      .select({
-        id: orders.id,
-        productId: orders.productId,
-        productName: products.name,
-        userId: orders.userId,
-        duration: orders.duration,
-        travelers: orders.travelers,
-        startDate: orders.startDate,
-        totalPrice: orders.totalPrice,
-        status: orders.status,
-        createdAt: orders.createdAt,
-        updatedAt: orders.updatedAt,
-      })
-      .from(orders)
-      .leftJoin(products, eq(orders.productId, products.id))
-      .orderBy(desc(orders.createdAt));
+    const orderRows = await db.select().from(orders).orderBy(desc(orders.createdAt));
+    const productIds = Array.from(new Set(orderRows.map((o) => o.productId)));
+    const productRows = productIds.length
+      ? await db.select().from(products).where(inArray(products.id, productIds))
+      : [];
+    const productMap = new Map(productRows.map((p) => [p.id, p.name]));
 
-    return NextResponse.json({ orders: ordersWithProducts });
+    return NextResponse.json({
+      orders: orderRows.map((order) => ({
+        ...order,
+        productName: productMap.get(order.productId) ?? "Unknown",
+      })),
+    });
   } catch (error) {
     console.error("Failed to fetch orders:", error);
     return NextResponse.json(

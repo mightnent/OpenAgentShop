@@ -7,6 +7,7 @@ OpenAgentShop is an SDK and CLI that generates complete Next.js storefronts wire
 - **MCP Server** with product discovery and checkout tools
 - **MCP-UI** components for rich product display in AI chat interfaces
 - **UCP Checkout** (Universal Commerce Protocol) session management
+- **Embedded Checkout (ECP)** via `continue_url` and `/checkout/[id]`
 - **Merchant Center** for product and order management
 - **Commerce Feed** endpoint (OpenAI-compatible JSONL)
 
@@ -55,6 +56,12 @@ Create a `catalog.json` file following the [Product Catalog Spec](./docs/product
 
 ```bash
 npx open-agent-shop init --catalog catalog.json --output ./my-store
+```
+
+### 2b. (Optional) Validate UCP profile
+
+```bash
+npx open-agent-shop ucp:check http://localhost:3000
 ```
 
 ### 3. Set up and run

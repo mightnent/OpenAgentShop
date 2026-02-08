@@ -34,6 +34,20 @@ const CORS_HEADERS = {
   "Access-Control-Expose-Headers": "MCP-Session-Id, MCP-Protocol-Version",
 };
 
+function getBaseUrl(request: NextRequest): string {
+  const forwardedHost = request.headers.get("x-forwarded-host");
+  const forwardedProto = request.headers.get("x-forwarded-proto") || "https";
+  if (forwardedHost) {
+    return \`\${forwardedProto}://\${forwardedHost}\`;
+  }
+  const host = request.headers.get("host");
+  if (host) {
+    const proto = host.includes("localhost") ? "http" : "https";
+    return \`\${proto}://\${host}\`;
+  }
+  return process.env.NEXT_PUBLIC_BASE_URL || ${JSON.stringify(catalog.shop.url)};
+}
+
 function withCors(response: NextResponse | Response) {
   const res = response instanceof NextResponse ? response : new NextResponse(response.body, response);
   for (const [key, value] of Object.entries(CORS_HEADERS)) {
@@ -80,7 +94,7 @@ export async function POST(request: NextRequest) {
 
   if (isInitialize) {
     // Create new session
-    const server = createMcpServer();
+    const server = createMcpServer({ baseUrl: getBaseUrl(request) });
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: () => crypto.randomUUID(),
       enableJsonResponse: true,

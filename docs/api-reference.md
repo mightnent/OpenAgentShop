@@ -195,7 +195,7 @@ Access-Control-Allow-Headers: Accept, Content-Type
   "capabilities": {
     "dev.ucp.shopping.checkout": [{
       "version": "2026-01-11",
-      "spec": "https://ucp.dev/specs/shopping/checkout",
+      "spec": "https://ucp.dev/specification/checkout",
       "schema": "https://ucp.dev/schemas/shopping/checkout.json"
     }]
   },

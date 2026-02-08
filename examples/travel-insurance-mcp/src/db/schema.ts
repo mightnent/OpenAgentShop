@@ -66,6 +66,14 @@ export const checkoutSessions = pgTable("checkout_sessions", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
+export const ucpIdempotencyKeys = pgTable("ucp_idempotency_keys", {
+  key: varchar("key", { length: 128 }).primaryKey(),
+  scope: varchar("scope", { length: 50 }).notNull(),
+  checkoutId: varchar("checkout_id", { length: 64 }).notNull(),
+  response: jsonb("response").$type<Record<string, unknown>>().notNull(),
+  createdAt: timestamp("created_at").defaultNow(),
+});
+
 export type Product = typeof products.$inferSelect;
 export type NewProduct = typeof products.$inferInsert;
 export type ProductMedia = typeof productMedia.$inferSelect;
@@ -74,3 +82,4 @@ export type Order = typeof orders.$inferSelect;
 export type NewOrder = typeof orders.$inferInsert;
 export type CheckoutSession = typeof checkoutSessions.$inferSelect;
 export type NewCheckoutSession = typeof checkoutSessions.$inferInsert;
+export type UcpIdempotencyKey = typeof ucpIdempotencyKeys.$inferSelect;

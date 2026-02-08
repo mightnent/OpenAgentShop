@@ -50,6 +50,12 @@ You can create the catalog JSON from various sources:
 npx open-agent-shop init --catalog catalog.json --output ./my-store
 ```
 
+Validate UCP discovery:
+
+```bash
+npx open-agent-shop ucp:check http://localhost:3000
+```
+
 Options:
 - `--catalog <path>` (required) - Path to your product catalog JSON
 - `--output <dir>` - Output directory (defaults to `./<shop-name>`)

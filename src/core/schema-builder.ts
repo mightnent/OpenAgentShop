@@ -119,6 +119,18 @@ export const checkoutSessions = pgTable("checkout_sessions", {
 });
 
 // ---------------------------------------------------------------------------
+// UCP Idempotency Keys Table
+// ---------------------------------------------------------------------------
+
+export const ucpIdempotencyKeys = pgTable("ucp_idempotency_keys", {
+  key: varchar("key", { length: 128 }).primaryKey(),
+  scope: varchar("scope", { length: 50 }).notNull(),
+  checkoutId: varchar("checkout_id", { length: 64 }).notNull(),
+  response: jsonb("response").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+// ---------------------------------------------------------------------------
 // Type Exports
 // ---------------------------------------------------------------------------
 
@@ -127,6 +139,7 @@ export type NewProduct = typeof products.$inferInsert;
 export type ProductMediaRecord = typeof productMedia.$inferSelect;
 export type Order = typeof orders.$inferSelect;
 export type CheckoutSession = typeof checkoutSessions.$inferSelect;
+export type UcpIdempotencyKey = typeof ucpIdempotencyKeys.$inferSelect;
 `;
 }
 

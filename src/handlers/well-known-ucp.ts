@@ -74,7 +74,6 @@ export function generateWellKnownUcpSource(
   ucpConfig?: UcpConfig
 ): string {
   const ucpVersion = ucpConfig?.version ?? "2026-01-11";
-  const mcpVersion = "2025-11-25"; // MCP transport version
   const shopName = catalog.shop.name;
   const shopUrl = catalog.shop.url;
   const ucpNamespace = deriveUcpNamespace(shopUrl, catalog.shop.ucp_namespace);
@@ -107,7 +106,7 @@ export function generateWellKnownUcpSource(
     [checkoutCapability]: [{
       version: ucpVersion,
       ...(specAuthority && {
-        spec: `${specAuthority}/specs/shopping/checkout`,
+        spec: `${specAuthority}/specification/checkout`,
         schema: `${specAuthority}/schemas/shopping/checkout.json`,
       }),
     }],
@@ -120,7 +119,7 @@ export function generateWellKnownUcpSource(
       capabilities[`${extPrefix}.${ext}`] = [{
         version: ucpVersion,
         ...(specAuthority && {
-          spec: `${specAuthority}/specs/shopping/${ext}`,
+          spec: `${specAuthority}/specification/${ext}`,
           schema: `${specAuthority}/schemas/shopping/${ext}.json`,
         }),
       }];
@@ -192,28 +191,49 @@ export async function OPTIONS() {
  */
 export async function GET() {
   const requestHeaders = await headers();
-  const BASE_URL = getBaseUrl(requestHeaders);
+  const STRICT = process.env.UCP_STRICT === "true";
+  let BASE_URL = getBaseUrl(requestHeaders);
+  if (STRICT && BASE_URL.startsWith("http://") && !BASE_URL.includes("localhost")) {
+    BASE_URL = BASE_URL.replace("http://", "https://");
+  }
 
-  const ucpProfile = {
+  const services = {
+    "${shoppingService}": [
+      {
+        version: ${JSON.stringify(ucpVersion)},
+        transport: "mcp",
+        endpoint: \`\${BASE_URL}/api/mcp\`,
+        spec: ${specAuthority ? JSON.stringify(`${specAuthority}/specification/checkout-mcp`) : "undefined"},
+        schema: ${specAuthority ? JSON.stringify(`${specAuthority}/services/shopping/mcp.openrpc.json`) : "undefined"},
+      },
+      {
+        version: ${JSON.stringify(ucpVersion)},
+        transport: "embedded",
+        endpoint: \`\${BASE_URL}/checkout\`,
+        spec: ${specAuthority ? JSON.stringify(`${specAuthority}/specification/embedded-checkout`) : "undefined"},
+        schema: ${specAuthority ? JSON.stringify(`${specAuthority}/services/shopping/embedded.openrpc.json`) : "undefined"},
+        config: {
+          continue_url_template: \`\${BASE_URL}/checkout/{id}\`,
+        },
+      },
+    ],
+  };
+
+  const ucpProfile: Record<string, unknown> = {
     ucp: {
       version: ${JSON.stringify(ucpVersion)},
+      services,
+      capabilities: ${JSON.stringify(capabilities, null, 4)},
+      payment_handlers: ${JSON.stringify(paymentHandlers, null, 4)},
     },
-    business: {
+  };
+
+  if (!STRICT) {
+    ucpProfile["business"] = {
       name: ${JSON.stringify(shopName)},
       url: BASE_URL,
-    },
-    capabilities: ${JSON.stringify(capabilities, null, 4)},
-    services: {
-      "${shoppingService}": [
-        {
-          version: ${JSON.stringify(mcpVersion)},
-          endpoint: \`\${BASE_URL}/api/mcp\`,
-          transport: "mcp",
-        },
-      ],
-    },
-    payment_handlers: ${JSON.stringify(paymentHandlers, null, 4)},
-  };
+    };
+  }
 
   return NextResponse.json(ucpProfile, {
     headers: CORS_HEADERS,

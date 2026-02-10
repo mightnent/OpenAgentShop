@@ -2,10 +2,10 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { db } from "@/db";
 import { products, productMedia } from "@/db/schema";
-import { eq, and, ilike, sql, inArray } from "drizzle-orm";
+import { eq, and } from "drizzle-orm";
 import { formatCurrencyDisplay } from "@/lib/currency";
 import { CheckoutSessionManager } from "@/lib/ucp/checkout-session-manager";
-import { generateProductListHtml, generateProductDetailHtml, generateRecommendationsHtml, generateOrderConfirmationHtml } from "@/lib/mcp-ui";
+import { generateProductDetailHtml, generateOrderConfirmationHtml } from "@/lib/mcp-ui";
 
 // In-memory store for MCP App resources (per-session)
 const mcpAppsResources = new Map<string, string>();
@@ -104,177 +104,6 @@ export function createMcpServer({ baseUrl }: { baseUrl: string }) {
   );
 
   // -----------------------------------------------------------------------
-  // Product Discovery Tools
-  // -----------------------------------------------------------------------
-
-  server.tool(
-    "list_products",
-    "List and filter Singtel Bill Payment products",
-    {
-      keyword: z.string().optional().describe("Search keyword for name/description"),
-      tier: z.enum(["prepaid", "postpaid"]).optional().describe("Filter by product tier"),
-      category: z.enum(["Mobile Bill", "Broadband Bill", "TV Bill"]).optional().describe("Filter by category"),
-      plan_type: z.string().optional().describe("Filter by Plan Type"),
-      overdue: z.string().optional().describe("Filter by Overdue"),
-      activeOnly: z.boolean().optional().default(true).describe("Only show active products"),
-      limit: z.number().int().min(1).max(50).optional().default(5).describe("Max number of products to return (default 5)"),
-      offset: z.number().int().min(0).optional().default(0).describe("Pagination offset"),
-    },
-    async (args) => {
-      const conditions = [];
-      if (args.activeOnly) conditions.push(eq(products.active, true));
-      if (args.keyword) {
-        conditions.push(
-          sql`(${products.name} ILIKE ${"%" + args.keyword + "%"} OR ${products.description} ILIKE ${"%" + args.keyword + "%"})`
-        );
-      }
-      if (args.tier) conditions.push(eq(products.tier, args.tier));
-      if (args.category) conditions.push(eq(products.category, args.category));
-
-      const result = await db
-        .select()
-        .from(products)
-        .where(conditions.length > 0 ? and(...conditions) : undefined)
-        .orderBy(products.price)
-        .limit(args.limit)
-        .offset(args.offset);
-
-      // Fetch media for all products
-      const mediaMap = new Map<number, { url: string; alt: string | null }[]>();
-      if (result.length > 0) {
-        const mediaRows = await db
-          .select({ productId: productMedia.productId, url: productMedia.url, alt: productMedia.alt, sortOrder: productMedia.sortOrder })
-          .from(productMedia)
-          .where(inArray(productMedia.productId, result.map((p) => p.id)))
-          .orderBy(productMedia.productId, productMedia.sortOrder);
-
-        for (const m of mediaRows) {
-          const list = mediaMap.get(m.productId) || [];
-          list.push({ url: m.url, alt: m.alt });
-          mediaMap.set(m.productId, list);
-        }
-      }
-
-      const productsWithMedia = result.map((p) => ({ ...p, media: mediaMap.get(p.id) || [] }));
-
-      const textSummary = productsWithMedia
-        .map((p) => {
-          const price = p.discountPrice
-            ? `~~${formatCurrencyDisplay(p.price, p.currency)}~~ ${formatCurrencyDisplay(p.discountPrice, p.currency)}`
-            : formatCurrencyDisplay(p.price, p.currency);
-          return `${p.id}. **${p.name}** (${price}): ${p.shortDescription || ""}`;
-        })
-        .join("\n");
-
-      const html = generateProductListHtml(productsWithMedia);
-      const resourcePath = "/products/list";
-      mcpAppsResources.set(resourcePath, html);
-
-      return {
-        content: [
-          { type: "text", text: `Showing ${result.length} products:\n\n${textSummary}` },
-          { type: "resource", resource: { uri: `ui://singtel-bill-payment${resourcePath}`, mimeType: "text/html", text: html } },
-        ],
-        _meta: { ui: { resourceUri: `ui://singtel-bill-payment${resourcePath}` } },
-      };
-    }
-  );
-
-  server.tool(
-    "get_product",
-    "Get detailed information about a specific Singtel Bill Payment product",
-    {
-      productId: z.number().describe("The product ID"),
-    },
-    async (args) => {
-      const result = await db
-        .select()
-        .from(products)
-        .where(eq(products.id, args.productId))
-        .limit(1);
-
-      if (result.length === 0) {
-        return { content: [{ type: "text", text: "Product not found." }] };
-      }
-
-      const p = result[0];
-      const media = await db
-        .select()
-        .from(productMedia)
-        .where(eq(productMedia.productId, p.id))
-        .orderBy(productMedia.sortOrder);
-
-      const price = p.discountPrice
-        ? `~~${formatCurrencyDisplay(p.price, p.currency)}~~ ${formatCurrencyDisplay(p.discountPrice, p.currency)}`
-        : formatCurrencyDisplay(p.price, p.currency);
-
-      const text = [
-        `## ${p.name}`,
-        `**Price:** ${price}`,
-        p.description || "",
-      ].join("\n\n");
-
-      const html = generateProductDetailHtml(p, media);
-      const resourcePath = `/products/${p.id}`;
-      mcpAppsResources.set(resourcePath, html);
-
-      return {
-        content: [
-          { type: "text", text },
-          { type: "resource", resource: { uri: `ui://singtel-bill-payment${resourcePath}`, mimeType: "text/html", text: html } },
-        ],
-        _meta: { ui: { resourceUri: `ui://singtel-bill-payment${resourcePath}` } },
-      };
-    }
-  );
-
-  server.tool(
-    "recommend_products",
-    "Get product recommendations based on preferences",
-    {
-      budget: z.number().optional().describe("Maximum budget in major currency units (e.g., 100 for $100)"),
-      preferredTier: z.enum(["prepaid", "postpaid"]).optional().describe("Preferred tier"),
-      keyword: z.string().optional().describe("What the customer is looking for"),
-      limit: z.number().int().min(1).max(20).optional().default(5).describe("Max number of recommendations to return (default 5)"),
-    },
-    async (args) => {
-      const conditions = [eq(products.active, true)];
-
-      if (args.budget) {
-        const budgetMinor = args.budget * 100;
-        conditions.push(sql`COALESCE(${products.discountPrice}, ${products.price}) <= ${budgetMinor}`);
-      }
-      if (args.preferredTier) conditions.push(eq(products.tier, args.preferredTier));
-
-      const result = await db
-        .select()
-        .from(products)
-        .where(and(...conditions))
-        .orderBy(products.price)
-        .limit(args.limit);
-
-      const textSummary = result
-        .map((p, i) => {
-          const price = formatCurrencyDisplay(p.discountPrice ?? p.price, p.currency);
-          return `${i + 1}. **${p.name}** (${price}) - ${p.shortDescription || ""}`;
-        })
-        .join("\n");
-
-      const html = generateRecommendationsHtml(result);
-      const resourcePath = "/products/recommendations";
-      mcpAppsResources.set(resourcePath, html);
-
-      return {
-        content: [
-          { type: "text", text: `Top ${result.length} recommendations:\n\n${textSummary}` },
-          { type: "resource", resource: { uri: `ui://singtel-bill-payment${resourcePath}`, mimeType: "text/html", text: html } },
-        ],
-        _meta: { ui: { resourceUri: `ui://singtel-bill-payment${resourcePath}` } },
-      };
-    }
-  );
-
-  // -----------------------------------------------------------------------
   // UCP Checkout Tools
   // -----------------------------------------------------------------------
 
@@ -318,12 +147,12 @@ export function createMcpServer({ baseUrl }: { baseUrl: string }) {
       id: z.string().describe("Checkout session ID"),
     },
     async (args) => {
-      const result = await checkoutManager.getCheckoutSession(args.id);
+      const result = await checkoutManager.getCheckoutSession(args.id) as Record<string, unknown>;
 
       // Return MCP UI for completed orders
       if (result.status === "completed" && result.order) {
         const html = generateOrderConfirmationHtml(result);
-        const resourcePath = `/orders/${result.order.id}`;
+        const resourcePath = `/orders/${(result.order as Record<string, unknown>).id}`;
         mcpAppsResources.set(resourcePath, html);
 
         return {
@@ -391,11 +220,11 @@ export function createMcpServer({ baseUrl }: { baseUrl: string }) {
         args.id,
         args.checkout ?? {},
         args.idempotency_key
-      );
+      ) as Record<string, unknown>;
 
       if (result.status === "completed" && result.order) {
         const html = generateOrderConfirmationHtml(result);
-        const resourcePath = `/orders/${result.order.id}`;
+        const resourcePath = `/orders/${(result.order as Record<string, unknown>).id}`;
         mcpAppsResources.set(resourcePath, html);
 
         return {

@@ -22,7 +22,7 @@ export const products = sqliteTable("products", {
   price: integer("price").notNull(),
   /** Discount price in minor units (null = no discount) */
   discountPrice: integer("discount_price"),
-  active: integer("active", { mode: "boolean" }).default(1).notNull(),
+  active: integer("active", { mode: "boolean" }).default(true).notNull(),
   /** Product tier: prepaid, postpaid */
   tier: text("tier").default("prepaid"),
   /** Product category: Mobile Bill, Broadband Bill, TV Bill */

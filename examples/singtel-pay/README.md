@@ -19,8 +19,6 @@ The app runs on: **http://localhost:3003**
 
 ## Agent Flow Example
 
-### Conversation Flow:
-
 **User:** Hey, can I check what is the outstanding bill for Singtel?
 
 **Agent:** Sure, can I have your phone number?
@@ -44,7 +42,7 @@ The app runs on: **http://localhost:3003**
 
 ## Available MCP Tools
 
-### 1. `lookup_bill_by_phone`
+### `lookup_bill_by_phone`
 Look up a bill by phone number (account number).
 
 **Parameters:**
@@ -57,25 +55,11 @@ Look up a bill by phone number (account number).
 }
 ```
 
-### 2. `list_products`
-List and filter bill products.
-
-**Parameters:**
-- `tier`: "prepaid" | "postpaid"
-- `category`: "Mobile Bill" | "Broadband Bill" | "TV Bill"
-- `keyword`: Search keyword
-- `activeOnly`: boolean (default: true)
-
-### 3. `get_product`
-Get detailed information about a specific bill.
-
-**Parameters:**
-- `productId`: number
-
-### 4. UCP Checkout Tools
+### UCP Checkout Tools
 - `create_checkout`: Start a checkout session
-- `update_checkout`: Update buyer information
-- `complete_checkout`: Finalize the checkout
+- `get_checkout`: Retrieve the current state of a checkout session
+- `update_checkout`: Update buyer information or line items
+- `complete_checkout`: Finalize the checkout and place the order
 - `cancel_checkout`: Cancel a checkout session
 
 ## Endpoints
@@ -110,7 +94,7 @@ Get detailed information about a specific bill.
 - **Plan:** Priority Ultra ($80/month)
 - **Amount:** S$80.00
 - **Due Date:** 2026-02-10
-- **Status:** ⚠️ OVERDUE
+- **Status:** OVERDUE
 - **Data Usage:** Unlimited 5G+
 
 ### Bill 3: 88776655
@@ -155,7 +139,7 @@ UCP_STRICT=false
 
 ## Testing the MCP Server
 
-You can test the MCP server by connecting Claude Desktop or any MCP client to:
+Connect Claude Desktop or any MCP client to:
 
 ```json
 {

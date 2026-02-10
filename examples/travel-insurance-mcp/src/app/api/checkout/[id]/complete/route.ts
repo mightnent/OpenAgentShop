@@ -1,21 +1,19 @@
-import { NextResponse } from "next/server";
-import { headers } from "next/headers";
+import { NextRequest, NextResponse } from "next/server";
 import { completeCheckoutSession } from "@/lib/ucp/checkout-session-manager";
 
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
 export async function POST(
-  request: Request,
-  { params }: { params: Promise<{ id: string }> }
+  request: NextRequest,
+  { params }: { params: { id: string } }
 ) {
-  const { id } = await params;
-  await headers();
   const body = await request.json();
-  const result = await completeCheckoutSession(
-    id,
-    body.checkout ?? body,
-    body.idempotency_key ?? ""
-  );
-  return NextResponse.json(result);
+  const idempotencyKey = body?.idempotencyKey || body?.idempotency_key || "";
+  if (!idempotencyKey) {
+    return NextResponse.json({ error: "idempotencyKey is required" }, { status: 400 });
+  }
+
+  const checkout = await completeCheckoutSession(params.id, body || {}, idempotencyKey);
+  if (!checkout) {
+    return NextResponse.json({ error: "Checkout session not found" }, { status: 404 });
+  }
+  return NextResponse.json(checkout);
 }

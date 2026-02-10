@@ -41,6 +41,7 @@ export default function MerchantCenter() {
   const [selectedProductIds, setSelectedProductIds] = useState<number[]>([]);
   const [loading, setLoading] = useState(true);
   const [ordersLoading, setOrdersLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState("products");
 
   useEffect(() => {
     fetchProducts();
@@ -61,7 +62,10 @@ export default function MerchantCenter() {
 
   async function fetchOrders() {
     try {
-      const res = await fetch("/api/merchant/orders");
+      const res = await fetch(`/api/merchant/orders?ts=${Date.now()}`, {
+        cache: "no-store",
+        headers: { "Cache-Control": "no-store" },
+      });
       const data = await res.json();
       setOrders(data.orders || []);
     } catch (error) {
@@ -136,7 +140,17 @@ export default function MerchantCenter() {
       </header>
 
       <main className="container mx-auto px-4 py-8">
-        <Tabs defaultValue="products" className="space-y-6">
+        <Tabs
+          value={activeTab}
+          onValueChange={(value) => {
+            setActiveTab(value);
+            if (value === "orders") {
+              setOrdersLoading(true);
+              fetchOrders();
+            }
+          }}
+          className="space-y-6"
+        >
           <TabsList>
             <TabsTrigger value="products">
               <Package className="h-4 w-4 mr-2" />
@@ -289,10 +303,24 @@ export default function MerchantCenter() {
           <TabsContent value="orders">
             <Card>
               <CardHeader>
-                <CardTitle className="text-lg">Orders</CardTitle>
-                <CardDescription>
-                  View and manage customer orders
-                </CardDescription>
+                <div className="flex flex-wrap items-start justify-between gap-4">
+                  <div>
+                    <CardTitle className="text-lg">Orders</CardTitle>
+                    <CardDescription>
+                      View and manage customer orders
+                    </CardDescription>
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setOrdersLoading(true);
+                      fetchOrders();
+                    }}
+                  >
+                    Refresh
+                  </Button>
+                </div>
               </CardHeader>
               <CardContent>
                 {ordersLoading ? (

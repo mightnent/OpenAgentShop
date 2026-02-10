@@ -7,6 +7,7 @@ import {
   boolean,
   timestamp,
   jsonb,
+  uniqueIndex,
 } from "drizzle-orm/pg-core";
 
 export const products = pgTable("products", {
@@ -66,13 +67,24 @@ export const checkoutSessions = pgTable("checkout_sessions", {
   updatedAt: timestamp("updated_at").defaultNow(),
 });
 
-export const ucpIdempotencyKeys = pgTable("ucp_idempotency_keys", {
-  key: varchar("key", { length: 128 }).primaryKey(),
-  scope: varchar("scope", { length: 50 }).notNull(),
-  checkoutId: varchar("checkout_id", { length: 64 }).notNull(),
-  response: jsonb("response").$type<Record<string, unknown>>().notNull(),
-  createdAt: timestamp("created_at").defaultNow(),
-});
+export const ucpIdempotencyKeys = pgTable(
+  "ucp_idempotency_keys",
+  {
+    id: serial("id").primaryKey(),
+    checkoutId: varchar("checkout_id", { length: 64 }).notNull(),
+    operation: varchar("operation", { length: 32 }).notNull(),
+    idempotencyKey: varchar("idempotency_key", { length: 128 }).notNull(),
+    responseData: jsonb("response_data").$type<Record<string, unknown>>().notNull(),
+    createdAt: timestamp("created_at").defaultNow(),
+  },
+  (table) => ({
+    uniqueOpKey: uniqueIndex("ucp_idempotency_unique").on(
+      table.checkoutId,
+      table.operation,
+      table.idempotencyKey
+    ),
+  })
+);
 
 export type Product = typeof products.$inferSelect;
 export type NewProduct = typeof products.$inferInsert;
@@ -83,3 +95,4 @@ export type NewOrder = typeof orders.$inferInsert;
 export type CheckoutSession = typeof checkoutSessions.$inferSelect;
 export type NewCheckoutSession = typeof checkoutSessions.$inferInsert;
 export type UcpIdempotencyKey = typeof ucpIdempotencyKeys.$inferSelect;
+export type NewUcpIdempotencyKey = typeof ucpIdempotencyKeys.$inferInsert;

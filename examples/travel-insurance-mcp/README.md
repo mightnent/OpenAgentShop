@@ -222,6 +222,9 @@ These tools return either **UCP JSON** (checkout tools) or **UI resources** (HTM
 This demo uses the UCP checkout capability end-to-end. The chat-host client renders the checkout card UI and invokes the MCP tools listed below as the user proceeds.
 
 **Diagram:** `docs/ucp-checkout-flow.excalidraw` (open in Excalidraw)
+**ECP Guide:** `docs/ucp-ecp.md`
+**Compliance Notes:** `docs/ucp-compliance.md`
+**Checkout API Notes:** `docs/ucp-checkout.md`
 
 ### Flow summary
 
@@ -256,6 +259,14 @@ This demo uses the UCP checkout capability end-to-end. The chat-host client rend
   - Invoked if the user requests cancellation from the assistant.
 
 > Note: UCP only defines the JSON checkout contract. In this demo, the platform (chat-host) renders a trusted UI and calls the UCP tools. The merchant UI handoff via `continue_url` is still supported for `requires_escalation` and as a fallback.
+
+### Embedded Checkout (ECP) mode
+
+When the checkout response includes an embedded service binding (`ucp.services[transport="embedded"]`), the platform should embed the merchant’s `continue_url` in an iframe and use ECP messages to delegate payment.
+
+- Merchant-hosted checkout: `GET /checkout/[id]` (this app)
+- Host embedding: `continue_url?ec_version=2026-01-11&ec_delegate=payment.instruments_change,payment.credential`
+- Delegated payment: host responds to `ec.payment.instruments_change_request` and `ec.payment.credential_request` with tokenized credentials
 
 ---
 

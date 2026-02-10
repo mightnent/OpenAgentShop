@@ -375,6 +375,7 @@ To purchase this product, use create_checkout with product ID ${product.id}.`;
     }),
     "idempotency-key": z.string().optional().describe("UUID for retry safety"),
   });
+  const ucpStrict = process.env.UCP_STRICT === "true";
 
   server.tool(
     "create_checkout",
@@ -393,14 +394,39 @@ To purchase this product, use create_checkout with product ID ${product.id}.`;
           }),
           quantity: z.number().default(1),
         })).describe("Items to purchase"),
-        currency: z.string().default("USD"),
+        currency: z.string().default("USD").optional(),
+        payment: z
+          .object({
+            instruments: z.array(z.unknown()).optional(),
+          })
+          .optional(),
       }),
     },
     async ({ meta, checkout }) => {
-      const result = await createCheckoutSession(checkout);
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(result) }],
-      };
+      try {
+        if (ucpStrict && (!checkout.line_items || checkout.line_items.length === 0)) {
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify({ error: "line_items is required" }) }],
+            isError: true,
+          };
+        }
+        const result = await createCheckoutSession(checkout);
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                error: error instanceof Error ? error.message : "create_checkout failed",
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
     }
   );
 
@@ -444,19 +470,44 @@ To purchase this product, use create_checkout with product ID ${product.id}.`;
           quantity: z.number().default(1),
         })).optional(),
         currency: z.string().optional(),
+        payment: z
+          .object({
+            instruments: z.array(z.unknown()).optional(),
+          })
+          .optional(),
       }),
     },
     async ({ id, checkout }) => {
-      const result = await updateCheckoutSession(id, checkout);
-      if (!result) {
+      try {
+        if (ucpStrict && (!checkout.line_items || checkout.line_items.length === 0)) {
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify({ error: "line_items is required for update_checkout" }) }],
+            isError: true,
+          };
+        }
+        const result = await updateCheckoutSession(id, checkout);
+        if (!result) {
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify({ error: "Checkout session not found", id }) }],
+            isError: true,
+          };
+        }
         return {
-          content: [{ type: "text" as const, text: JSON.stringify({ error: "Checkout session not found", id }) }],
+          content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                error: error instanceof Error ? error.message : "update_checkout failed",
+              }),
+            },
+          ],
           isError: true,
         };
       }
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(result) }],
-      };
     }
   );
 
@@ -468,7 +519,7 @@ To purchase this product, use create_checkout with product ID ${product.id}.`;
         "ucp-agent": z.object({
           profile: z.string(),
         }),
-        "idempotency-key": z.string().describe("UUID for retry safety (required)"),
+        "idempotency-key": z.string().optional().describe("UUID for retry safety (required)"),
       }),
       id: z.string().describe("Checkout session ID"),
       checkout: z.object({
@@ -476,22 +527,51 @@ To purchase this product, use create_checkout with product ID ${product.id}.`;
           instruments: z.array(z.unknown()).optional(),
         }).optional(),
       }).optional(),
+      idempotency_key: z.string().optional().describe("UUID for retry safety (UCP OpenRPC param)"),
     },
-    async ({ meta, id, checkout }) => {
-      const result = await completeCheckoutSession(
-        id,
-        (checkout as Record<string, unknown>) || {},
-        meta["idempotency-key"]
-      );
-      if (!result) {
+    async ({ meta, id, checkout, idempotency_key }) => {
+      const metaKey = meta["idempotency-key"];
+      const resolvedKey = idempotency_key || metaKey || "";
+      if (metaKey && idempotency_key && metaKey !== idempotency_key) {
         return {
-          content: [{ type: "text" as const, text: JSON.stringify({ error: "Checkout session not found", id }) }],
+          content: [{ type: "text" as const, text: JSON.stringify({ error: "idempotency_key mismatch", id }) }],
           isError: true,
         };
       }
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(result) }],
-      };
+      if (!resolvedKey) {
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify({ error: "idempotency_key is required", id }) }],
+          isError: true,
+        };
+      }
+      try {
+        const result = await completeCheckoutSession(
+          id,
+          (checkout as Record<string, unknown>) || {},
+          resolvedKey
+        );
+        if (!result) {
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify({ error: "Checkout session not found", id }) }],
+            isError: true,
+          };
+        }
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                error: error instanceof Error ? error.message : "complete_checkout failed",
+              }),
+            },
+          ],
+          isError: true,
+        };
+      }
     }
   );
 
@@ -503,21 +583,36 @@ To purchase this product, use create_checkout with product ID ${product.id}.`;
         "ucp-agent": z.object({
           profile: z.string(),
         }),
-        "idempotency-key": z.string().describe("UUID for retry safety (required)"),
+        "idempotency-key": z.string().optional().describe("UUID for retry safety (recommended)"),
       }),
       id: z.string().describe("Checkout session ID"),
     },
     async ({ meta, id }) => {
-      const result = await cancelCheckoutSession(id, meta["idempotency-key"]);
-      if (!result) {
+      const idempotencyKey = meta["idempotency-key"] || "";
+      try {
+        const result = await cancelCheckoutSession(id, idempotencyKey);
+        if (!result) {
+          return {
+            content: [{ type: "text" as const, text: JSON.stringify({ error: "Checkout session not found", id }) }],
+            isError: true,
+          };
+        }
         return {
-          content: [{ type: "text" as const, text: JSON.stringify({ error: "Checkout session not found", id }) }],
+          content: [{ type: "text" as const, text: JSON.stringify(result) }],
+        };
+      } catch (error) {
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                error: error instanceof Error ? error.message : "cancel_checkout failed",
+              }),
+            },
+          ],
           isError: true,
         };
       }
-      return {
-        content: [{ type: "text" as const, text: JSON.stringify(result) }],
-      };
     }
   );
 

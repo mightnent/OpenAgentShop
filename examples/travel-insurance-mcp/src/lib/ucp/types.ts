@@ -50,11 +50,42 @@ export interface UcpPaymentHandlerRef {
   id: string;
   version: string;
   config?: Record<string, unknown>;
+  spec?: string;
+  schema?: string;
+}
+
+export interface UcpServiceBinding {
+  version: string;
+  spec?: string;
+  schema?: string;
+  transport?: "rest" | "mcp" | "a2a" | "embedded";
+  endpoint?: string;
+  config?: Record<string, unknown>;
+}
+
+export interface UcpPaymentCredential {
+  type: string;
+  token?: string;
+  [key: string]: unknown;
+}
+
+export interface UcpPaymentInstrument {
+  id: string;
+  handler_id: string;
+  type: string;
+  selected?: boolean;
+  credential?: UcpPaymentCredential;
+  display?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export interface UcpPayment {
+  instruments?: UcpPaymentInstrument[];
 }
 
 export interface UcpResponseEnvelope {
   version: string;
-  services?: Record<string, Array<{ version: string; transport: string; endpoint?: string; spec?: string; schema?: string; config?: Record<string, unknown> }>>;
+  services?: Record<string, UcpServiceBinding[]>;
   capabilities: Record<string, UcpCapabilityVersion[]>;
   payment_handlers?: Record<string, UcpPaymentHandlerRef[]>;
 }
@@ -79,5 +110,6 @@ export interface UcpCheckoutResponse {
   continue_url?: string;
   expires_at?: string;
   links?: UcpLink[];
+  payment?: UcpPayment;
   order?: UcpOrderConfirmation;
 }

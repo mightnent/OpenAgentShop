@@ -2,7 +2,11 @@
  * UCP Checkout Session Manager Generator
  *
  * Generates a checkout session manager that implements the UCP
- * checkout capability (dev.ucp.shopping.checkout) for any shop.
+ * checkout capability (dev.ucp.shopping.checkout).
+ *
+ * Produces spec-compliant checkout responses per:
+ * https://ucp.dev/specification/checkout
+ * https://ucp.dev/specification/checkout-mcp
  *
  * Checkout lifecycle:
  *   incomplete → ready_for_complete → completed
@@ -11,7 +15,7 @@
  */
 
 import type { ProductCatalog } from "../types/product-catalog";
-import type { UcpConfig, PaymentHandlerConfig } from "../types/config";
+import type { UcpConfig } from "../types/config";
 
 /**
  * Derive UCP namespace from URL or use provided namespace
@@ -19,17 +23,15 @@ import type { UcpConfig, PaymentHandlerConfig } from "../types/config";
  */
 function deriveUcpNamespace(url: string, providedNamespace?: string): string {
   if (providedNamespace) return providedNamespace;
-  
+
   try {
     const parsed = new URL(url);
     const hostname = parsed.hostname;
-    
-    // Handle localhost/development
+
     if (hostname === "localhost" || hostname === "127.0.0.1") {
       return "dev.localhost";
     }
-    
-    // Reverse the domain parts: myshop.com -> com.myshop
+
     const parts = hostname.replace(/^www\./, "").split(".");
     return parts.reverse().join(".");
   } catch {
@@ -50,16 +52,26 @@ export function generateCheckoutManagerSource(
   const ucpNamespace = deriveUcpNamespace(shopUrl, catalog.shop.ucp_namespace);
 
   const ucpVersion = ucpConfig?.version ?? "2026-01-11";
-  
-  // Use namespace-based capability if not explicitly provided
-  const defaultCapability = ucpNamespace.startsWith("dev.") 
-    ? "dev.ucp.shopping.checkout" 
+
+  // Capability names (Record format per spec)
+  const defaultCapability = ucpNamespace.startsWith("dev.")
+    ? "dev.ucp.shopping.checkout"
     : `${ucpNamespace}.checkout`;
   const capabilities: Record<string, Array<{ version: string }>> = {
     [defaultCapability]: [{ version: ucpVersion }],
   };
 
-  // Use namespace-based payment handler if not explicitly provided
+  // Extension capabilities
+  if (ucpConfig?.extensions) {
+    const extPrefix = ucpNamespace.startsWith("dev.")
+      ? "dev.ucp.shopping"
+      : ucpNamespace;
+    for (const ext of ucpConfig.extensions) {
+      capabilities[`${extPrefix}.${ext}`] = [{ version: ucpVersion }];
+    }
+  }
+
+  // Payment handlers (Record format per spec)
   const defaultPaymentHandler = ucpNamespace.startsWith("dev.")
     ? "com.demo.mock_payment"
     : `${ucpNamespace}.payment`;
@@ -73,41 +85,25 @@ export function generateCheckoutManagerSource(
     ],
   };
 
-  // Add extension capabilities (use namespace-aware capability names)
-  if (ucpConfig?.extensions) {
-    const extPrefix = ucpNamespace.startsWith("dev.") ? "dev.ucp.shopping" : ucpNamespace;
-    for (const ext of ucpConfig.extensions) {
-      capabilities[`${extPrefix}.${ext}`] = [{ version: ucpVersion }];
-    }
-  }
-
-  // Determine if using standard namespace
-  const useStandardNamespace = ucpNamespace.startsWith("dev.ucp");
-  const namespaceAuthority = "";
-  const serviceName = useStandardNamespace ? "dev.ucp.shopping" : ucpNamespace;
-
   return `import { db } from "@/db";
 import { products, orders, checkoutSessions, ucpIdempotencyKeys } from "@/db/schema";
 import { eq, and } from "drizzle-orm";
-import { calculateTotals } from "@/lib/currency";
+import type { CheckoutResponseStatus } from "@ucp-js/sdk";
 
 const UCP_VERSION = ${JSON.stringify(ucpVersion)};
 const CURRENCY = ${JSON.stringify(currency)};
 const TAX_RATE = ${taxRate};
 const SESSION_TTL_MS = 30 * 60 * 1000; // 30 minutes
 const SHOP_URL = ${JSON.stringify(shopUrl)};
-const SPEC_AUTHORITY = ${JSON.stringify(useStandardNamespace ? "https://ucp.dev" : namespaceAuthority)};
-const SERVICE_NAME = ${JSON.stringify(serviceName)};
-const DEFAULT_DELEGATES = ["payment.instruments_change", "payment.credential"];
 
-type CheckoutStatus =
-  | "incomplete"
-  | "ready_for_complete"
-  | "requires_escalation"
-  | "complete_in_progress"
-  | "completed"
-  | "canceled";
-const TERMINAL_STATUSES: CheckoutStatus[] = ["completed", "canceled"];
+const CAPABILITIES = ${JSON.stringify(capabilities, null, 2)};
+const PAYMENT_HANDLERS = ${JSON.stringify(paymentHandlers, null, 2)};
+
+const TERMINAL_STATUSES: CheckoutResponseStatus[] = ["completed", "canceled"];
+
+// ---------------------------------------------------------------------------
+// Internal input types (from MCP tool arguments)
+// ---------------------------------------------------------------------------
 
 interface LineItemInput {
   item: { id: string };
@@ -118,8 +114,12 @@ interface BuyerInput {
   email?: string;
   first_name?: string;
   last_name?: string;
-  phone?: string;
+  phone_number?: string;
 }
+
+// ---------------------------------------------------------------------------
+// Resolved types (spec-compliant response shapes)
+// ---------------------------------------------------------------------------
 
 interface ResolvedLineItem {
   id: string;
@@ -128,80 +128,99 @@ interface ResolvedLineItem {
     title: string;
     price: number;
     image_url?: string;
-    description?: string;
-    url?: string;
   };
   quantity: number;
   totals: Array<{ type: string; amount: number }>;
 }
 
-function buildUcpEnvelope(baseUrl: string, delegate: string[]) {
-  const authority = SPEC_AUTHORITY || undefined;
-  const services = {
-    [SERVICE_NAME]: [
-      {
-        version: UCP_VERSION,
-        transport: "mcp",
-        endpoint: \`\${baseUrl}/api/mcp\`,
-        spec: authority ? \`\${authority}/specification/checkout-mcp\` : undefined,
-        schema: authority ? \`\${authority}/services/shopping/mcp.openrpc.json\` : undefined,
-      },
-      {
-        version: UCP_VERSION,
-        transport: "embedded",
-        endpoint: \`\${baseUrl}/checkout\`,
-        spec: authority ? \`\${authority}/specification/embedded-checkout\` : undefined,
-        schema: authority ? \`\${authority}/services/shopping/embedded.openrpc.json\` : undefined,
-        config: {
-          delegate,
-          continue_url_template: \`\${baseUrl}/checkout/{id}\`,
-        },
-      },
-    ],
-  };
+interface UcpMessage {
+  type: "error" | "warning" | "info";
+  code: string;
+  content: string;
+  severity?: "recoverable" | "requires_buyer_input" | "requires_buyer_review";
+  path?: string;
+}
 
+// ---------------------------------------------------------------------------
+// UCP sub-object builder (checkout responses only — no services)
+// ---------------------------------------------------------------------------
+
+function buildCheckoutUcp() {
   return {
-    ucp: {
-      version: UCP_VERSION,
-      services,
-      capabilities: ${JSON.stringify(capabilities, null, 4).replace(/\n/g, "\n      ")},
-      payment_handlers: ${JSON.stringify(paymentHandlers, null, 4).replace(/\n/g, "\n      ")},
-    },
+    version: UCP_VERSION,
+    capabilities: CAPABILITIES,
+    payment_handlers: PAYMENT_HANDLERS,
   };
 }
 
-function makeResponse(data: Record<string, unknown>, baseUrl: string, delegate: string[] = DEFAULT_DELEGATES) {
-  return { ...buildUcpEnvelope(baseUrl, delegate), ...data };
+/**
+ * Build a spec-compliant checkout response.
+ * The \`ucp\` sub-object is included inside the checkout data.
+ */
+function makeResponse(data: Record<string, unknown>) {
+  return {
+    ucp: buildCheckoutUcp(),
+    ...data,
+  };
 }
+
+// ---------------------------------------------------------------------------
+// Status evaluation
+// ---------------------------------------------------------------------------
 
 function evaluateStatus(
   buyer?: BuyerInput,
   lineItems?: ResolvedLineItem[],
   payment?: { instruments?: Array<{ credential?: unknown }> }
 ): {
-  status: CheckoutStatus;
-  messages: Array<{ type: string; code: string; content: string; severity: string; path?: string }>;
+  status: CheckoutResponseStatus;
+  messages: UcpMessage[];
 } {
-  const messages: Array<{ type: string; code: string; content: string; severity: string; path?: string }> = [];
+  const messages: UcpMessage[] = [];
 
   if (!lineItems || lineItems.length === 0) {
-    messages.push({ type: "error", code: "empty_cart", content: "Cart is empty", severity: "recoverable" });
+    messages.push({
+      type: "error",
+      code: "empty_cart",
+      content: "Cart is empty",
+      severity: "recoverable",
+    });
     return { status: "incomplete", messages };
   }
 
   if (!buyer?.email) {
-    messages.push({ type: "error", code: "missing_buyer_email", content: "Buyer email is required", severity: "requires_buyer_input", path: "$.buyer.email" });
+    messages.push({
+      type: "error",
+      code: "missing_buyer_email",
+      content: "Buyer email is required",
+      severity: "requires_buyer_input",
+      path: "$.buyer.email",
+    });
   }
   if (!buyer?.first_name) {
-    messages.push({ type: "error", code: "missing_buyer_first_name", content: "Buyer first name is required", severity: "requires_buyer_input", path: "$.buyer.first_name" });
+    messages.push({
+      type: "error",
+      code: "missing_buyer_first_name",
+      content: "Buyer first name is required",
+      severity: "requires_buyer_input",
+      path: "$.buyer.first_name",
+    });
   }
   if (!buyer?.last_name) {
-    messages.push({ type: "error", code: "missing_buyer_last_name", content: "Buyer last name is required", severity: "requires_buyer_input", path: "$.buyer.last_name" });
+    messages.push({
+      type: "error",
+      code: "missing_buyer_last_name",
+      content: "Buyer last name is required",
+      severity: "requires_buyer_input",
+      path: "$.buyer.last_name",
+    });
   }
 
   const hasErrors = messages.some((m) => m.type === "error");
   const hasCredential =
-    payment?.instruments?.some((instrument) => Boolean(instrument?.credential)) ?? false;
+    payment?.instruments?.some((instrument) =>
+      Boolean(instrument?.credential)
+    ) ?? false;
 
   if (hasErrors) {
     return { status: "incomplete", messages };
@@ -220,9 +239,18 @@ function evaluateStatus(
   return { status: "ready_for_complete", messages };
 }
 
-async function resolveLineItems(items: LineItemInput[] | undefined): Promise<{ resolved: ResolvedLineItem[]; messages: Array<{ type: string; code: string; content: string; severity: string }> }> {
+// ---------------------------------------------------------------------------
+// Line item resolution
+// ---------------------------------------------------------------------------
+
+async function resolveLineItems(
+  items: LineItemInput[] | undefined
+): Promise<{
+  resolved: ResolvedLineItem[];
+  messages: UcpMessage[];
+}> {
   const resolved: ResolvedLineItem[] = [];
-  const messages: Array<{ type: string; code: string; content: string; severity: string }> = [];
+  const messages: UcpMessage[] = [];
 
   if (!items || !Array.isArray(items)) {
     return { resolved, messages };
@@ -232,24 +260,41 @@ async function resolveLineItems(items: LineItemInput[] | undefined): Promise<{ r
     const input = items[i];
     const itemId = input.item.id;
 
-    // Try parsing as numeric ID or look up by catalogId
     let product;
     const numId = parseInt(itemId, 10);
     if (!isNaN(numId)) {
-      const rows = await db.select().from(products).where(eq(products.id, numId)).limit(1);
+      const rows = await db
+        .select()
+        .from(products)
+        .where(eq(products.id, numId))
+        .limit(1);
       product = rows[0];
     }
     if (!product) {
-      const rows = await db.select().from(products).where(eq(products.catalogId, itemId)).limit(1);
+      const rows = await db
+        .select()
+        .from(products)
+        .where(eq(products.catalogId, itemId))
+        .limit(1);
       product = rows[0];
     }
 
     if (!product) {
-      messages.push({ type: "error", code: "item_not_found", content: \`Product "\${itemId}" not found\`, severity: "recoverable" });
+      messages.push({
+        type: "error",
+        code: "item_not_found",
+        content: \`Product "\${itemId}" not found\`,
+        severity: "recoverable",
+      });
       continue;
     }
     if (!product.active) {
-      messages.push({ type: "error", code: "item_unavailable", content: \`Product "\${product.name}" is not available\`, severity: "recoverable" });
+      messages.push({
+        type: "error",
+        code: "item_unavailable",
+        content: \`Product "\${product.name}" is not available\`,
+        severity: "recoverable",
+      });
       continue;
     }
 
@@ -262,8 +307,6 @@ async function resolveLineItems(items: LineItemInput[] | undefined): Promise<{ r
         id: String(product.id),
         title: product.name,
         price: unitPrice,
-        description: product.shortDescription ?? undefined,
-        url: \`\${SHOP_URL}/products/\${product.id}\`,
       },
       quantity: input.quantity,
       totals: [
@@ -276,9 +319,16 @@ async function resolveLineItems(items: LineItemInput[] | undefined): Promise<{ r
   return { resolved, messages };
 }
 
+// ---------------------------------------------------------------------------
+// Totals computation
+// ---------------------------------------------------------------------------
+
 function computeTotals(lineItems: ResolvedLineItem[] | undefined) {
   if (!lineItems || !Array.isArray(lineItems)) {
-    return [{ type: "subtotal", amount: 0 }, { type: "total", amount: 0 }];
+    return [
+      { type: "subtotal", amount: 0 },
+      { type: "total", amount: 0 },
+    ];
   }
   const subtotal = lineItems.reduce((sum, li) => {
     const liSubtotal = li.totals.find((t) => t.type === "subtotal");
@@ -287,7 +337,7 @@ function computeTotals(lineItems: ResolvedLineItem[] | undefined) {
   const tax = Math.round(subtotal * TAX_RATE);
   const total = subtotal + tax;
 
-  const totals = [
+  const totals: Array<{ type: string; amount: number }> = [
     { type: "subtotal", amount: subtotal },
   ];
   if (TAX_RATE > 0) {
@@ -298,14 +348,26 @@ function computeTotals(lineItems: ResolvedLineItem[] | undefined) {
   return totals;
 }
 
+// ---------------------------------------------------------------------------
+// Base URL resolution
+// ---------------------------------------------------------------------------
+
 function resolveBaseUrl(preferred?: string) {
   let baseUrl = preferred || process.env.NEXT_PUBLIC_BASE_URL || SHOP_URL;
   const strict = process.env.UCP_STRICT === "true";
-  if (strict && baseUrl.startsWith("http://") && !baseUrl.includes("localhost")) {
+  if (
+    strict &&
+    baseUrl.startsWith("http://") &&
+    !baseUrl.includes("localhost")
+  ) {
     baseUrl = baseUrl.replace("http://", "https://");
   }
   return baseUrl;
 }
+
+// ---------------------------------------------------------------------------
+// Checkout Session Manager
+// ---------------------------------------------------------------------------
 
 export class CheckoutSessionManager {
   private baseUrl?: string;
@@ -318,12 +380,19 @@ export class CheckoutSessionManager {
     return resolveBaseUrl(this.baseUrl);
   }
 
-  async createCheckoutSession(input: { meta?: Record<string, unknown>; checkout: { buyer?: BuyerInput; line_items: LineItemInput[]; payment?: { instruments?: Array<{ credential?: unknown }> } } }) {
+  async createCheckoutSession(input: {
+    meta?: Record<string, unknown>;
+    checkout: {
+      buyer?: BuyerInput;
+      line_items: LineItemInput[];
+      payment?: { instruments?: Array<{ credential?: unknown }> };
+    };
+  }) {
     const sessionId = \`checkout_\${crypto.randomUUID()}\`;
     const lineItemsInput = input.checkout?.line_items || [];
     const baseUrl = this.getBaseUrl();
-    
-    // Guard against empty or invalid line_items
+    const expiresAt = new Date(Date.now() + SESSION_TTL_MS).toISOString();
+
     if (!Array.isArray(lineItemsInput) || lineItemsInput.length === 0) {
       return makeResponse({
         id: sessionId,
@@ -331,11 +400,22 @@ export class CheckoutSessionManager {
         currency: CURRENCY,
         line_items: [],
         totals: [],
-        messages: [{ type: "error", code: "empty_cart", content: "Cart is empty", severity: "recoverable" }],
-      }, baseUrl);
+        links: [],
+        messages: [
+          {
+            type: "error",
+            code: "empty_cart",
+            content: "Cart is empty",
+            severity: "recoverable",
+          },
+        ],
+        continue_url: \`\${baseUrl}/checkout/\${sessionId}\`,
+        expires_at: expiresAt,
+      });
     }
 
-    const { resolved, messages: itemMessages } = await resolveLineItems(lineItemsInput);
+    const { resolved, messages: itemMessages } =
+      await resolveLineItems(lineItemsInput);
 
     if (itemMessages.some((m) => m.type === "error")) {
       return makeResponse({
@@ -344,8 +424,11 @@ export class CheckoutSessionManager {
         currency: CURRENCY,
         line_items: [],
         totals: [],
+        links: [],
         messages: itemMessages,
-      }, baseUrl);
+        continue_url: \`\${baseUrl}/checkout/\${sessionId}\`,
+        expires_at: expiresAt,
+      });
     }
 
     const totals = computeTotals(resolved);
@@ -363,9 +446,11 @@ export class CheckoutSessionManager {
       buyer: input.checkout.buyer || {},
       line_items: resolved,
       totals,
+      links: [],
       messages: allMessages.length > 0 ? allMessages : undefined,
       payment: input.checkout.payment,
       continue_url: \`\${baseUrl}/checkout/\${sessionId}\`,
+      expires_at: expiresAt,
     };
 
     await db.insert(checkoutSessions).values({
@@ -376,50 +461,118 @@ export class CheckoutSessionManager {
       expiresAt: new Date(Date.now() + SESSION_TTL_MS),
     });
 
-    return makeResponse(checkoutData, baseUrl);
+    return makeResponse(checkoutData);
   }
 
   async getCheckoutSession(id: string) {
-    const baseUrl = this.getBaseUrl();
-    const rows = await db.select().from(checkoutSessions).where(eq(checkoutSessions.id, id)).limit(1);
+    const rows = await db
+      .select()
+      .from(checkoutSessions)
+      .where(eq(checkoutSessions.id, id))
+      .limit(1);
     if (rows.length === 0) {
-      return makeResponse({ error: "Checkout session not found", status: "error" }, baseUrl);
+      return makeResponse({
+        id,
+        status: "canceled",
+        currency: CURRENCY,
+        line_items: [],
+        totals: [],
+        links: [],
+        messages: [
+          {
+            type: "error",
+            code: "session_not_found",
+            content: "Checkout session not found",
+            severity: "recoverable",
+          },
+        ],
+      });
     }
-    return makeResponse(rows[0].checkoutData as Record<string, unknown>, baseUrl);
+    return makeResponse(rows[0].checkoutData as Record<string, unknown>);
   }
 
-  async updateCheckoutSession(id: string, input: { buyer?: BuyerInput; line_items?: LineItemInput[]; payment?: { instruments?: Array<{ credential?: unknown }> } }) {
+  async updateCheckoutSession(
+    id: string,
+    input: {
+      buyer?: BuyerInput;
+      line_items?: LineItemInput[];
+      payment?: { instruments?: Array<{ credential?: unknown }> };
+    }
+  ) {
     const baseUrl = this.getBaseUrl();
-    const rows = await db.select().from(checkoutSessions).where(eq(checkoutSessions.id, id)).limit(1);
+    const rows = await db
+      .select()
+      .from(checkoutSessions)
+      .where(eq(checkoutSessions.id, id))
+      .limit(1);
     if (rows.length === 0) {
-      return makeResponse({ error: "Checkout session not found", status: "error" }, baseUrl);
+      return makeResponse({
+        id,
+        status: "canceled",
+        currency: CURRENCY,
+        line_items: [],
+        totals: [],
+        links: [],
+        messages: [
+          {
+            type: "error",
+            code: "session_not_found",
+            content: "Checkout session not found",
+            severity: "recoverable",
+          },
+        ],
+      });
     }
 
     const session = rows[0];
-    if (TERMINAL_STATUSES.includes(session.status as CheckoutStatus)) {
+    if (
+      TERMINAL_STATUSES.includes(session.status as CheckoutResponseStatus)
+    ) {
       return makeResponse({
         ...(session.checkoutData as Record<string, unknown>),
-        messages: [{ type: "error", code: "checkout_immutable", content: "Cannot update a completed or canceled checkout", severity: "recoverable" }],
-      }, baseUrl);
+        messages: [
+          {
+            type: "error",
+            code: "checkout_immutable",
+            content: "Cannot update a completed or canceled checkout",
+            severity: "recoverable",
+          },
+        ],
+      });
     }
 
     const existingData = session.checkoutData as Record<string, unknown>;
     let resolvedItems = existingData.line_items as ResolvedLineItem[];
-    const allMessages: Array<{ type: string; code: string; content: string; severity: string }> = [];
+    const allMessages: UcpMessage[] = [];
 
-    if (input.line_items && Array.isArray(input.line_items) && input.line_items.length > 0) {
+    if (
+      input.line_items &&
+      Array.isArray(input.line_items) &&
+      input.line_items.length > 0
+    ) {
       const { resolved, messages } = await resolveLineItems(input.line_items);
       resolvedItems = resolved;
       allMessages.push(...messages);
     }
 
     const buyer = input.buyer
-      ? { ...(existingData.buyer as Record<string, unknown> || {}), ...input.buyer }
+      ? {
+          ...((existingData.buyer as Record<string, unknown>) || {}),
+          ...input.buyer,
+        }
       : existingData.buyer;
 
     const totals = computeTotals(resolvedItems);
-    const payment = input.payment ?? (existingData.payment as { instruments?: Array<{ credential?: unknown }> } | undefined);
-    const { status, messages: statusMessages } = evaluateStatus(buyer as BuyerInput, resolvedItems, payment);
+    const payment =
+      input.payment ??
+      (existingData.payment as
+        | { instruments?: Array<{ credential?: unknown }> }
+        | undefined);
+    const { status, messages: statusMessages } = evaluateStatus(
+      buyer as BuyerInput,
+      resolvedItems,
+      payment
+    );
     allMessages.push(...statusMessages);
 
     const updatedData = {
@@ -428,6 +581,7 @@ export class CheckoutSessionManager {
       line_items: resolvedItems,
       totals,
       status,
+      links: (existingData.links as unknown[]) || [],
       messages: allMessages.length > 0 ? allMessages : undefined,
       payment,
       continue_url: \`\${baseUrl}/checkout/\${id}\`,
@@ -442,14 +596,37 @@ export class CheckoutSessionManager {
       })
       .where(eq(checkoutSessions.id, id));
 
-    return makeResponse(updatedData, baseUrl);
+    return makeResponse(updatedData);
   }
 
-  async completeCheckoutSession(id: string, checkoutInput: Record<string, unknown>, idempotencyKey?: string) {
+  async completeCheckoutSession(
+    id: string,
+    checkoutInput: Record<string, unknown>,
+    idempotencyKey?: string
+  ) {
     const baseUrl = this.getBaseUrl();
-    const rows = await db.select().from(checkoutSessions).where(eq(checkoutSessions.id, id)).limit(1);
+    const rows = await db
+      .select()
+      .from(checkoutSessions)
+      .where(eq(checkoutSessions.id, id))
+      .limit(1);
     if (rows.length === 0) {
-      return makeResponse({ error: "Checkout session not found", status: "error" }, baseUrl);
+      return makeResponse({
+        id,
+        status: "canceled",
+        currency: CURRENCY,
+        line_items: [],
+        totals: [],
+        links: [],
+        messages: [
+          {
+            type: "error",
+            code: "session_not_found",
+            content: "Checkout session not found",
+            severity: "recoverable",
+          },
+        ],
+      });
     }
 
     const session = rows[0];
@@ -459,7 +636,13 @@ export class CheckoutSessionManager {
       const prior = await db
         .select()
         .from(ucpIdempotencyKeys)
-        .where(and(eq(ucpIdempotencyKeys.key, idempotencyKey), eq(ucpIdempotencyKeys.scope, "complete_checkout"), eq(ucpIdempotencyKeys.checkoutId, id)))
+        .where(
+          and(
+            eq(ucpIdempotencyKeys.key, idempotencyKey),
+            eq(ucpIdempotencyKeys.scope, "complete_checkout"),
+            eq(ucpIdempotencyKeys.checkoutId, id)
+          )
+        )
         .limit(1);
       if (prior.length > 0) {
         return prior[0].response as Record<string, unknown>;
@@ -472,34 +655,53 @@ export class CheckoutSessionManager {
     };
 
     const paymentInput = (checkoutInput as any)?.payment;
-    const lineItems = (mergedData.line_items as ResolvedLineItem[]) || [];
-    const totals = (mergedData.totals as Array<{ type: string; amount: number }>) || [];
-    const totalAmount = totals.find((t) => t.type === "total")?.amount ?? 0;
+    const lineItems =
+      (mergedData.line_items as ResolvedLineItem[]) || [];
+    const totals =
+      (mergedData.totals as Array<{ type: string; amount: number }>) || [];
+    const totalAmount =
+      totals.find((t) => t.type === "total")?.amount ?? 0;
     const buyer = mergedData.buyer as BuyerInput;
 
     const { status, messages: statusMessages } = evaluateStatus(
       buyer,
       lineItems,
-      paymentInput ?? (mergedData.payment as { instruments?: Array<{ credential?: unknown }> } | undefined)
+      paymentInput ??
+        (mergedData.payment as
+          | { instruments?: Array<{ credential?: unknown }> }
+          | undefined)
     );
 
     if (status !== "ready_for_complete") {
       return makeResponse({
         ...mergedData,
         status,
+        links: (mergedData.links as unknown[]) || [],
         messages: [
           ...statusMessages,
-          { type: "error", code: "checkout_not_ready", content: \`Checkout status is "\${session.status}", must be "ready_for_complete"\`, severity: "recoverable" },
+          {
+            type: "error",
+            code: "checkout_not_ready",
+            content: \`Checkout status is "\${session.status}", must be "ready_for_complete"\`,
+            severity: "recoverable",
+          },
         ],
-      }, baseUrl);
+      });
     }
 
-    // Create order
     if (lineItems.length === 0) {
       return makeResponse({
         ...mergedData,
-        messages: [{ type: "error", code: "empty_cart", content: "Cannot complete checkout with no items", severity: "recoverable" }],
-      }, baseUrl);
+        links: (mergedData.links as unknown[]) || [],
+        messages: [
+          {
+            type: "error",
+            code: "empty_cart",
+            content: "Cannot complete checkout with no items",
+            severity: "recoverable",
+          },
+        ],
+      });
     }
 
     const [order] = await db
@@ -513,12 +715,18 @@ export class CheckoutSessionManager {
       })
       .returning();
 
+    const permalinkUrl = \`\${baseUrl}/orders/\${order.id}\`;
+
     await db
       .update(checkoutSessions)
       .set({
         status: "completed",
         orderId: order.id,
-        checkoutData: { ...mergedData, status: "completed", order: { id: String(order.id) } },
+        checkoutData: {
+          ...mergedData,
+          status: "completed",
+          order: { id: String(order.id), permalink_url: permalinkUrl },
+        },
         updatedAt: new Date(),
       })
       .where(eq(checkoutSessions.id, id));
@@ -526,13 +734,12 @@ export class CheckoutSessionManager {
     const response = makeResponse({
       ...mergedData,
       status: "completed",
+      links: (mergedData.links as unknown[]) || [],
       order: {
         id: String(order.id),
-        status: "confirmed",
-        total: totalAmount,
-        currency: session.currency,
+        permalink_url: permalinkUrl,
       },
-    }, baseUrl);
+    });
 
     if (idempotencyKey) {
       await db.insert(ucpIdempotencyKeys).values({
@@ -547,28 +754,63 @@ export class CheckoutSessionManager {
   }
 
   async cancelCheckoutSession(id: string, _idempotencyKey?: string) {
-    const baseUrl = this.getBaseUrl();
-    const rows = await db.select().from(checkoutSessions).where(eq(checkoutSessions.id, id)).limit(1);
+    const rows = await db
+      .select()
+      .from(checkoutSessions)
+      .where(eq(checkoutSessions.id, id))
+      .limit(1);
     if (rows.length === 0) {
-      return makeResponse({ error: "Checkout session not found", status: "error" }, baseUrl);
+      return makeResponse({
+        id,
+        status: "canceled",
+        currency: CURRENCY,
+        line_items: [],
+        totals: [],
+        links: [],
+        messages: [
+          {
+            type: "error",
+            code: "session_not_found",
+            content: "Checkout session not found",
+            severity: "recoverable",
+          },
+        ],
+      });
     }
 
     const session = rows[0];
-    if (TERMINAL_STATUSES.includes(session.status as CheckoutStatus)) {
+    if (
+      TERMINAL_STATUSES.includes(session.status as CheckoutResponseStatus)
+    ) {
       return makeResponse({
         ...(session.checkoutData as Record<string, unknown>),
-        messages: [{ type: "error", code: "checkout_not_cancelable", content: "Cannot cancel a completed or already canceled checkout", severity: "recoverable" }],
-      }, baseUrl);
+        messages: [
+          {
+            type: "error",
+            code: "checkout_not_cancelable",
+            content:
+              "Cannot cancel a completed or already canceled checkout",
+            severity: "recoverable",
+          },
+        ],
+      });
     }
 
-    const updatedData = { ...(session.checkoutData as Record<string, unknown>), status: "canceled" };
+    const updatedData = {
+      ...(session.checkoutData as Record<string, unknown>),
+      status: "canceled",
+    };
 
     await db
       .update(checkoutSessions)
-      .set({ status: "canceled", checkoutData: updatedData, updatedAt: new Date() })
+      .set({
+        status: "canceled",
+        checkoutData: updatedData,
+        updatedAt: new Date(),
+      })
       .where(eq(checkoutSessions.id, id));
 
-    return makeResponse(updatedData, baseUrl);
+    return makeResponse(updatedData);
   }
 }
 `;

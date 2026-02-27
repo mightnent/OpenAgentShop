@@ -256,7 +256,7 @@ ${tiers.length > 0 ? `      if (args.preferredTier) conditions.push(eq(products.
           email: z.string().optional(),
           first_name: z.string().optional(),
           last_name: z.string().optional(),
-          phone: z.string().optional(),
+          phone_number: z.string().optional(),
         }).optional(),
         line_items: z.array(
           z.object({
@@ -268,7 +268,10 @@ ${tiers.length > 0 ? `      if (args.preferredTier) conditions.push(eq(products.
     },
     async (args) => {
       const result = await checkoutManager.createCheckoutSession(args);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return {
+        structuredContent: { checkout: result },
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
     }
   );
 
@@ -284,7 +287,10 @@ ${tiers.length > 0 ? `      if (args.preferredTier) conditions.push(eq(products.
     },
     async (args) => {
       const result = await checkoutManager.getCheckoutSession(args.id);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return {
+        structuredContent: { checkout: result },
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
     }
   );
 
@@ -302,7 +308,7 @@ ${tiers.length > 0 ? `      if (args.preferredTier) conditions.push(eq(products.
           email: z.string().optional(),
           first_name: z.string().optional(),
           last_name: z.string().optional(),
-          phone: z.string().optional(),
+          phone_number: z.string().optional(),
         }).optional(),
         line_items: z.array(
           z.object({
@@ -314,7 +320,10 @@ ${tiers.length > 0 ? `      if (args.preferredTier) conditions.push(eq(products.
     },
     async (args) => {
       const result = await checkoutManager.updateCheckoutSession(args.id, args.checkout);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return {
+        structuredContent: { checkout: result },
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
     }
   );
 
@@ -348,6 +357,7 @@ ${tiers.length > 0 ? `      if (args.preferredTier) conditions.push(eq(products.
         mcpAppsResources.set(resourcePath, html);
 
         return {
+          structuredContent: { checkout: result },
           content: [
             { type: "text", text: JSON.stringify(result, null, 2) },
             { type: "resource", resource: { uri: \`ui://${slugify(shopName)}\${resourcePath}\`, mimeType: "text/html", text: html } },
@@ -356,7 +366,10 @@ ${tiers.length > 0 ? `      if (args.preferredTier) conditions.push(eq(products.
         };
       }
 
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return {
+        structuredContent: { checkout: result },
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
     }
   );
 
@@ -373,7 +386,10 @@ ${tiers.length > 0 ? `      if (args.preferredTier) conditions.push(eq(products.
     },
     async (args) => {
       const result = await checkoutManager.cancelCheckoutSession(args.id, args.idempotency_key);
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+      return {
+        structuredContent: { checkout: result },
+        content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      };
     }
   );
 

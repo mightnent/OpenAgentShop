@@ -508,6 +508,7 @@ function getPackageJsonSource(catalog: ProductCatalog, config?: OpenAgentShopCon
     react: "^19.2.4",
     "react-dom": "^19.2.4",
     "@modelcontextprotocol/sdk": "^1.25.3",
+    "@ucp-js/sdk": "^0.1.0",
     "drizzle-orm": "^0.45.1",
     zod: "^3.25.76",
     tailwindcss: "^3.4.19",
